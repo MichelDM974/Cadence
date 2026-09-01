@@ -367,8 +367,28 @@ function downloadForecastCsv() {
   URL.revokeObjectURL(url);
 }
 
+function resetForecastAndBacktest() {
+  lastForecastData = null;
+  lastForecastRows = null;
+  el("download-btn").hidden = true;
+  if (charts["forecast-chart"]) {
+    charts["forecast-chart"].destroy();
+    delete charts["forecast-chart"];
+  }
+  el("forecast-status").textContent = "";
+
+  lastBacktestData = null;
+  el("backtest-result").hidden = true;
+  if (charts["backtest-chart"]) {
+    charts["backtest-chart"].destroy();
+    delete charts["backtest-chart"];
+  }
+  el("backtest-status").textContent = "";
+}
+
 async function onAnalyze() {
   const status = el("source-status");
+  resetForecastAndBacktest(); // une nouvelle source rend l'ancienne prévision/comparaison obsolète
   try {
     status.textContent = "Analyse en cours...";
     currentSource = currentSourceFromUI();
@@ -396,6 +416,8 @@ async function onForecast() {
 async function onBacktest() {
   const status = el("backtest-status");
   const horizon = parseInt(el("horizon-input").value, 10);
+  lastBacktestData = null;
+  el("backtest-result").hidden = true; // efface l'ancien résultat avant d'en calculer un nouveau
   try {
     status.textContent = "Comparaison en cours...";
     const data = await fetchBacktest(currentSource, horizon);
