@@ -37,7 +37,8 @@ Chaque flux de données client (couverts, CA, etc.) est traité comme une **sér
 - **Prototype technique validé** sur données réelles (Kaggle *Recruit Restaurant Visitor Forecasting*) : pipeline décomposition (STL) + prévision (SARIMAX) fonctionnel sur 800+ restaurants, testé en soumission Kaggle réelle (score 0.580 RMSLE, à comparer au 0.501 en tête de leaderboard — bon baseline, pas optimisé)
 - **Web app locale fonctionnelle** (FastAPI + HTML/JS, `src/api.py` + `src/static/`) : décomposition (tendance/saisonnier/événementiel/résidu), indice de régularité, alertes de rupture, prévision avec intervalle de confiance, export CSV, thème clair/sombre/système
 - **Variables exogènes opérationnelles** pour données françaises, activables individuellement, à partir d'une simple ville/code postal saisie par l'utilisateur : jours fériés (avec Alsace-Moselle), vacances scolaires (par académie), météo (historique réelle + normales saisonnières pour le futur)
-- **Modèle validé contre une baseline naïve** : SARIMAX bat "même jour la semaine dernière" sur 91% des restaurants testés (818, backtest 28 jours), amélioration médiane +28,4% sur le MAE — voir `src/baseline_comparison.py`
+- **Modèle validé contre une baseline naïve** : SARIMAX bat "même jour la semaine dernière" sur 91% des restaurants testés (818, backtest 28 jours), amélioration médiane +28,4% sur le MAE — voir `src/baseline_comparison.py` ; comparaison aussi exposée en direct dans l'app, par restaurant
+- **Persistance locale** (SQLite, `src/storage.py`) : un CSV importé peut être sauvegardé comme "point de vente" (nom + série + localisation) et ré-analysé plus tard sans le ré-importer — pas encore de compte utilisateur, base locale partagée
 - CI GitHub Actions (tests automatiques à chaque push/PR sur `main`)
 - Pour lancer en local : `uvicorn api:app` depuis `src/` (dépendances dans `requirements.txt`, tests dans `requirements-dev.txt`)
 
@@ -49,12 +50,11 @@ Chaque flux de données client (couverts, CA, etc.) est traité comme une **sér
 - Choix des méthodes de modélisation (statistiques classiques type SARIMA/Prophet vs approches ML) — arbitrage à faire selon volume de données client ; SARIMAX retenu pour le prototype actuel, validé contre une baseline naïve (voir État d'avancement)
 - Besoin réel du B2C
 - Disponibilité domaine/marque "Cadence" (INPI)
-- Persistance / comptes utilisateurs : l'app actuelle est sans état (chaque analyse repart de zéro, pas d'historique ni de compte)
+- Comptes utilisateurs / authentification : la persistance actuelle (SQLite) n'a pas de notion de compte, une seule base locale partagée par tous les points de vente
 
 ## Prochaines étapes
 
-- Décider comment (ou si) exposer la comparaison SARIMAX vs baseline naïve dans l'app, pour construire la confiance utilisateur sur la précision du modèle
+- Comptes utilisateurs si l'app doit être partagée entre plusieurs restaurateurs (la persistance locale actuelle suppose un seul utilisateur)
 - Continuer à corriger les bugs de robustesse (formats de date non standards, etc. — le séparateur CSV `;` est déjà corrigé)
-- Réfléchir à la persistance (historique des analyses, notion de compte/point de vente) pour que l'app soit utilisable dans la durée, pas juste en aller-retour
 - Identifier et contacter des restaurateurs cibles pour valider le besoin réel (aucun contact identifié à ce jour — volontairement mis de côté tant que le produit n'est pas jugé assez solide)
 - Vérifier domaine/marque
