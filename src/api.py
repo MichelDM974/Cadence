@@ -93,7 +93,11 @@ def forecast(
 
 
 def parse_csv(content: bytes, date_col: str, value_col: str) -> pd.DataFrame:
-    raw = pd.read_csv(io.BytesIO(content))
+    try:
+        raw = pd.read_csv(io.BytesIO(content), sep=None, engine="python")
+    except Exception:
+        raw = pd.read_csv(io.BytesIO(content))  # repli : virgule standard
+
     if date_col not in raw.columns or value_col not in raw.columns:
         raise HTTPException(400, "Colonnes introuvables dans le CSV")
 

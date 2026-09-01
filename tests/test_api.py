@@ -23,6 +23,15 @@ def test_parse_csv_rejects_unknown_columns():
         parse_csv(content, "nope", "value")
 
 
+def test_parse_csv_detects_semicolon_delimiter():
+    rows = [(f"2024-01-{d:02d}", 10 + d) for d in range(1, 25)]  # 24 jours
+    lines = ["date;value"] + [f"{d};{v}" for d, v in rows]
+    content = "\n".join(lines).encode()
+    df = parse_csv(content, "date", "value")
+    assert len(df) == 24
+    assert list(df.columns) == ["visitors"]
+
+
 def test_parse_csv_rejects_short_history():
     rows = [(f"2024-01-{d:02d}", 10) for d in range(1, 10)]  # 9 jours < 21
     with pytest.raises(HTTPException):

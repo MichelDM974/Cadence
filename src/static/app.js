@@ -145,13 +145,28 @@ async function fetchCitySuggestions(query) {
   }
 }
 
+function detectDelimiter(headerLine) {
+  const candidates = [",", ";", "\t"];
+  let best = ",";
+  let bestCount = 0;
+  for (const d of candidates) {
+    const count = headerLine.split(d).length - 1;
+    if (count > bestCount) {
+      bestCount = count;
+      best = d;
+    }
+  }
+  return best;
+}
+
 function setupFileInput() {
   el("file-input").addEventListener("change", async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const text = await file.text();
     const firstLine = text.split(/\r?\n/, 1)[0];
-    const columns = firstLine.split(",").map((c) => c.trim());
+    const delimiter = detectDelimiter(firstLine);
+    const columns = firstLine.split(delimiter).map((c) => c.trim());
 
     const fill = (id) =>
       (el(id).innerHTML = columns.map((c) => `<option value="${c}">${c}</option>`).join(""));
