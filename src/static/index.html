@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cadence</title>
+  <script>
+    (function () {
+      var saved = localStorage.getItem("cadence-theme");
+      if (saved === "light" || saved === "dark") {
+        document.documentElement.dataset.theme = saved;
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Cadence</h1>
+      <p>Prévision du rythme d'activité — décomposition, régularité, ruptures, prévision.</p>
+    </div>
+    <div class="theme-switch" id="theme-switch">
+      <button type="button" data-theme-value="light">Clair</button>
+      <button type="button" data-theme-value="dark">Sombre</button>
+      <button type="button" data-theme-value="system">Système</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel" id="source-panel">
+      <h2>1. Données</h2>
+      <div class="source-choice">
+        <label><input type="radio" name="source" value="store" checked /> Restaurant de test (Kaggle)</label>
+        <label><input type="radio" name="source" value="upload" /> Importer un CSV</label>
+      </div>
+
+      <div id="store-source">
+        <label for="store-select">Restaurant</label>
+        <select id="store-select"></select>
+      </div>
+
+      <div id="upload-source" hidden>
+        <label for="file-input">Fichier CSV</label>
+        <input type="file" id="file-input" accept=".csv" />
+        <div id="column-selects" hidden>
+          <label for="date-col">Colonne date</label>
+          <select id="date-col"></select>
+          <label for="value-col">Colonne couverts / CA</label>
+          <select id="value-col"></select>
+        </div>
+        <label for="location-input">Ville ou code postal (optionnel)</label>
+        <div class="autocomplete">
+          <input type="text" id="location-input" placeholder="ex. Lyon ou 69001" autocomplete="off" />
+          <ul id="location-suggestions" hidden></ul>
+        </div>
+        <div id="exog-toggles" hidden>
+          <label><input type="checkbox" id="toggle-ferie" checked /> Jours fériés</label>
+          <label><input type="checkbox" id="toggle-vacances" checked /> Vacances scolaires</label>
+          <label><input type="checkbox" id="toggle-meteo" checked /> Météo</label>
+        </div>
+      </div>
+
+      <button id="analyze-btn" disabled>Analyser</button>
+      <p id="source-status" class="status"></p>
+    </section>
+
+    <section class="panel" id="results" hidden>
+      <h2>2. Rythme observé</h2>
+      <p id="period-label"></p>
+      <canvas id="observed-chart" height="90"></canvas>
+
+      <h2>3. Décomposition</h2>
+      <div class="metrics">
+        <div class="metric">
+          <span class="metric-value" id="metric-regularity">–</span>
+          <span class="metric-label">Indice de régularité</span>
+        </div>
+        <div class="metric">
+          <span class="metric-value" id="metric-anomalies">–</span>
+          <span class="metric-label">Ruptures détectées</span>
+        </div>
+        <div id="effects-metrics"></div>
+      </div>
+
+      <div class="decomposition-grid">
+        <div><h3>Tendance</h3><canvas id="trend-chart" height="120"></canvas></div>
+        <div><h3>Saisonnier (hebdo)</h3><canvas id="seasonal-chart" height="120"></canvas></div>
+        <div><h3>Événementiel</h3><canvas id="event-chart" height="120"></canvas></div>
+        <div><h3>Résidu</h3><canvas id="resid-chart" height="120"></canvas></div>
+      </div>
+
+      <div id="weather-section" hidden>
+        <h3>Météo</h3>
+        <p id="weather-corr" class="hint"></p>
+        <canvas id="weather-chart" height="100"></canvas>
+      </div>
+
+      <div id="anomalies-section" hidden>
+        <h3>Ruptures de rythme</h3>
+        <table id="anomalies-table">
+          <thead><tr><th>Date</th><th>Écart résiduel</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <h2>4. Prévision</h2>
+      <div class="forecast-controls">
+        <label for="horizon-input">Horizon (jours)</label>
+        <input type="number" id="horizon-input" value="28" min="7" max="90" />
+        <button id="forecast-btn">Générer la prévision</button>
+        <button id="download-btn" hidden>Télécharger (CSV)</button>
+      </div>
+      <canvas id="forecast-chart" height="100"></canvas>
+      <p id="forecast-status" class="status"></p>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

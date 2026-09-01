@@ -1,0 +1,8 @@
+pandas
+statsmodels
+matplotlib
+fastapi
+uvicorn[standard]
+python-multipart
+requests
+holidays
