@@ -8,6 +8,7 @@ fériés, vacances scolaires, météo). Sert aussi le frontend statique
 import io
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.staticfiles import StaticFiles
@@ -21,11 +22,13 @@ from decompose_prototype import (
     event_components,
     load_series,
     regularity_index,
+    seasonal_naive_forecast,
 )
 
 app = FastAPI(title="Cadence API")
 
 STATIC_DIR = Path(__file__).parent / "static"
+MIN_BACKTEST_TRAIN_DAYS = 90
 
 
 def analyze(df: pd.DataFrame, flags: dict | None = None, weather: pd.DataFrame | None = None) -> dict:
@@ -92,6 +95,44 @@ def forecast(
     }
 
 
+def backtest(
+    df: pd.DataFrame,
+    horizon: int,
+    exog_hist: pd.DataFrame | None = None,
+    exog_future: pd.DataFrame | None = None,
+) -> dict:
+    """Compare, sur les derniers `horizon` jours déjà connus, la prévision
+    SARIMAX à une baseline naïve ("même jour la semaine dernière") — sert à
+    montrer concrètement l'apport du modèle pour ce restaurant précis.
+    """
+    if len(df) < MIN_BACKTEST_TRAIN_DAYS + horizon:
+        raise HTTPException(
+            400,
+            f"Historique trop court pour un backtest fiable "
+            f"(minimum {MIN_BACKTEST_TRAIN_DAYS + horizon} jours, {len(df)} disponibles)",
+        )
+
+    train, test = df.iloc[:-horizon], df.iloc[-horizon:]
+    naive_pred = seasonal_naive_forecast(train["visitors"], horizon)
+    sarimax_result = forecast(train, horizon, exog_hist=exog_hist, exog_future=exog_future)
+    sarimax_pred = np.array(sarimax_result["prevision"])
+    actual = test["visitors"].to_numpy()
+
+    mae_naive = float(np.abs(naive_pred - actual).mean())
+    mae_sarimax = float(np.abs(sarimax_pred - actual).mean())
+    improvement_pct = None if mae_naive == 0 else round((mae_naive - mae_sarimax) / mae_naive * 100, 1)
+
+    return {
+        "dates": [d.date().isoformat() for d in test.index],
+        "actual": [round(float(v), 1) for v in actual],
+        "naive": [round(float(v), 1) for v in naive_pred],
+        "sarimax": [round(float(v), 1) for v in sarimax_pred],
+        "mae_naive": round(mae_naive, 1),
+        "mae_sarimax": round(mae_sarimax, 1),
+        "improvement_pct": improvement_pct,
+    }
+
+
 def parse_csv(content: bytes, date_col: str, value_col: str) -> pd.DataFrame:
     try:
         raw = pd.read_csv(io.BytesIO(content), sep=None, engine="python")
@@ -140,6 +181,13 @@ def api_store_analysis(store_id: str):
 @app.get("/api/stores/{store_id}/forecast")
 def api_store_forecast(store_id: str, horizon: int = Query(28, ge=7, le=90)):
     return forecast(load_series(store_id), horizon)
+
+
+@app.get("/api/stores/{store_id}/backtest")
+def api_store_backtest(store_id: str, horizon: int = Query(28, ge=7, le=90)):
+    df = load_series(store_id)
+    exog = df[["holiday_flg"]]
+    return backtest(df, horizon, exog_hist=exog.iloc[:-horizon], exog_future=exog.iloc[-horizon:])
 
 
 @app.post("/api/upload/analysis")
@@ -193,6 +241,32 @@ async def api_upload_forecast(
         exog_future = exogenous.location_exog(loc, future_dates)[columns]
 
     return forecast(df, horizon, exog_hist=exog_hist, exog_future=exog_future)
+
+
+@app.post("/api/upload/backtest")
+async def api_upload_backtest(
+    file: UploadFile = File(...),
+    date_col: str = Form(...),
+    value_col: str = Form(...),
+    horizon: int = Form(28),
+    location: str | None = Form(None),
+    use_ferie: bool = Form(True),
+    use_vacances: bool = Form(True),
+    use_meteo: bool = Form(True),
+):
+    df = parse_csv(await file.read(), date_col, value_col)
+
+    exog_hist, exog_future = None, None
+    columns = (["ferie"] if use_ferie else []) + (["vacances"] if use_vacances else [])
+    columns += ["temp_max", "precipitation"] if use_meteo else []
+
+    if location and columns:
+        loc = geocode_or_400(location)
+        exog = exogenous.location_exog(loc, df.index)[columns]
+        exog_hist = exog.iloc[:-horizon]
+        exog_future = exog.iloc[-horizon:]
+
+    return backtest(df, horizon, exog_hist=exog_hist, exog_future=exog_future)
 
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

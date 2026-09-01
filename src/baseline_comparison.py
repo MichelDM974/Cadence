@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 
-from decompose_prototype import DATA_DIR, OUTPUT_DIR, load_series
+from decompose_prototype import DATA_DIR, OUTPUT_DIR, load_series, seasonal_naive_forecast
 
 HORIZON = 28
 SEASON = 7
@@ -41,12 +41,6 @@ def timeout(seconds: int):
 def all_store_ids() -> list[str]:
     visits = pd.read_csv(f"{DATA_DIR}/air_visit_data.csv")
     return sorted(visits["air_store_id"].unique())
-
-
-def seasonal_naive_forecast(train: pd.Series, horizon: int, season: int = SEASON) -> np.ndarray:
-    last_season = train.iloc[-season:].to_numpy()
-    reps = int(np.ceil(horizon / season))
-    return np.tile(last_season, reps)[:horizon]
 
 
 def sarimax_forecast(train: pd.DataFrame, test: pd.DataFrame) -> np.ndarray:

@@ -2,7 +2,7 @@ import pandas as pd
 import pytest
 from fastapi import HTTPException
 
-from api import analyze, forecast, parse_csv
+from api import analyze, backtest, forecast, parse_csv
 
 
 def make_csv_bytes(rows):
@@ -40,7 +40,9 @@ def test_parse_csv_rejects_short_history():
 
 def _synthetic_series(n_days: int = 60) -> pd.DataFrame:
     dates = pd.date_range("2024-01-01", periods=n_days, freq="D")
-    values = [20 + 5 * (i % 7) for i in range(n_days)]
+    # saisonnalité hebdo + légère tendance + bruit déterministe, pour que la
+    # baseline naïve ne soit pas parfaite (cas dégénéré peu réaliste)
+    values = [20 + 5 * (i % 7) + 0.05 * i + (i % 3) for i in range(n_days)]
     return pd.DataFrame({"visitors": values}, index=dates)
 
 
@@ -69,3 +71,21 @@ def test_forecast_returns_requested_horizon():
     assert len(result["prevision"]) == 10
     assert len(result["ic_bas"]) == 10
     assert len(result["ic_haut"]) == 10
+
+
+def test_backtest_rejects_short_history():
+    df = _synthetic_series(n_days=60)
+    with pytest.raises(HTTPException):
+        backtest(df, horizon=28)
+
+
+def test_backtest_returns_comparison():
+    df = _synthetic_series(n_days=150)
+    result = backtest(df, horizon=20)
+    assert len(result["dates"]) == 20
+    assert len(result["actual"]) == 20
+    assert len(result["naive"]) == 20
+    assert len(result["sarimax"]) == 20
+    assert "mae_naive" in result
+    assert "mae_sarimax" in result
+    assert result["improvement_pct"] is not None

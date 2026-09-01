@@ -3,6 +3,7 @@ let currentSource = null; // { type: "store", storeId } | { type: "upload", file
 let lastForecastRows = null;
 let lastAnalysisData = null;
 let lastForecastData = null;
+let lastBacktestData = null;
 
 const el = (id) => document.getElementById(id);
 
@@ -239,6 +240,28 @@ async function fetchForecast(source, horizon) {
   return res.json();
 }
 
+async function fetchBacktest(source, horizon) {
+  if (source.type === "store") {
+    const res = await fetch(`/api/stores/${source.storeId}/backtest?horizon=${horizon}`);
+    if (!res.ok) throw new Error((await res.json()).detail || "Erreur de comparaison");
+    return res.json();
+  }
+  const form = new FormData();
+  form.append("file", source.file);
+  form.append("date_col", source.dateCol);
+  form.append("value_col", source.valueCol);
+  form.append("horizon", horizon);
+  if (source.location) {
+    form.append("location", source.location);
+    form.append("use_ferie", source.useFerie);
+    form.append("use_vacances", source.useVacances);
+    form.append("use_meteo", source.useMeteo);
+  }
+  const res = await fetch("/api/upload/backtest", { method: "POST", body: form });
+  if (!res.ok) throw new Error((await res.json()).detail || "Erreur de comparaison");
+  return res.json();
+}
+
 function renderAnalysis(data) {
   lastAnalysisData = data;
   el("results").hidden = false;
@@ -311,6 +334,25 @@ function renderForecast(data) {
   el("download-btn").hidden = false;
 }
 
+function renderBacktest(data) {
+  lastBacktestData = data;
+  el("backtest-result").hidden = false;
+
+  const better = data.improvement_pct >= 0;
+  const pct = Math.abs(data.improvement_pct).toFixed(1);
+  el("backtest-summary").innerHTML = better
+    ? `Sur les ${data.dates.length} derniers jours connus, notre modèle est <strong>${pct}% plus précis</strong> ` +
+      `qu'une estimation naïve ("même jour la semaine dernière") — erreur moyenne : ${data.mae_sarimax} contre ${data.mae_naive} couverts.`
+    : `Sur les ${data.dates.length} derniers jours connus, notre modèle fait <strong>${pct}% moins bien</strong> ` +
+      `qu'une estimation naïve pour ce restaurant — erreur moyenne : ${data.mae_sarimax} contre ${data.mae_naive} couverts.`;
+
+  renderLineChart("backtest-chart", data.dates, [
+    simpleDataset("Réel", data.actual, cssVar("--text")),
+    simpleDataset("Naïve", data.naive, cssVar("--accent-2")),
+    simpleDataset("SARIMAX", data.sarimax, cssVar("--accent")),
+  ]);
+}
+
 function downloadForecastCsv() {
   if (!lastForecastRows) return;
   const header = "date,prevision,ic_bas,ic_haut";
@@ -351,9 +393,23 @@ async function onForecast() {
   }
 }
 
+async function onBacktest() {
+  const status = el("backtest-status");
+  const horizon = parseInt(el("horizon-input").value, 10);
+  try {
+    status.textContent = "Comparaison en cours...";
+    const data = await fetchBacktest(currentSource, horizon);
+    renderBacktest(data);
+    status.textContent = "";
+  } catch (err) {
+    status.textContent = err.message;
+  }
+}
+
 function rerenderCharts() {
   if (lastAnalysisData) renderAnalysis(lastAnalysisData);
   if (lastForecastData) renderForecast(lastForecastData);
+  if (lastBacktestData) renderBacktest(lastBacktestData);
 }
 
 function updateThemeButtons(value) {
@@ -396,6 +452,7 @@ function init() {
   el("analyze-btn").addEventListener("click", onAnalyze);
   el("forecast-btn").addEventListener("click", onForecast);
   el("download-btn").addEventListener("click", downloadForecastCsv);
+  el("backtest-btn").addEventListener("click", onBacktest);
   loadStores().then(updateAnalyzeButtonState);
 }
 

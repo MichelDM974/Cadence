@@ -320,3 +320,15 @@ th, td {
   width: 90px;
   margin: 0;
 }
+
+.backtest-summary {
+  background: var(--accent-soft);
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin: 14px 0;
+  font-size: 1rem;
+}
+
+.backtest-summary strong {
+  color: var(--accent);
+}

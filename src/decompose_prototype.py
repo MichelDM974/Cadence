@@ -5,6 +5,7 @@ Visitor Forecasting (data/raw/air_visit_data.csv, data/raw/date_info.csv).
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from statsmodels.tsa.seasonal import STL
 import matplotlib.pyplot as plt
@@ -47,6 +48,17 @@ def regularity_index(resid: pd.Series, observed: pd.Series) -> float:
 def detect_anomalies(resid: pd.Series, n_std: float = 2.5) -> pd.Series:
     threshold = n_std * resid.std()
     return resid[resid.abs() > threshold]
+
+
+def seasonal_naive_forecast(train: pd.Series, horizon: int, season: int = 7):
+    """Baseline "même jour la semaine dernière" : répète le dernier cycle
+    hebdomadaire connu sur tout l'horizon de prévision, sans utiliser de
+    modèle — sert de référence pour juger si SARIMAX apporte une vraie
+    valeur ajoutée.
+    """
+    last_season = train.iloc[-season:].to_numpy()
+    reps = int(np.ceil(horizon / season))
+    return np.tile(last_season, reps)[:horizon]
 
 
 def event_components(resid: pd.Series, flags: dict) -> tuple[pd.Series, dict]:

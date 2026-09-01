@@ -114,6 +114,18 @@
       </div>
       <canvas id="forecast-chart" height="100"></canvas>
       <p id="forecast-status" class="status"></p>
+
+      <h2>5. Le modèle est-il fiable ?</h2>
+      <p class="hint">
+        Compare la prévision SARIMAX à une estimation naïve ("même jour la semaine dernière") sur les derniers
+        jours déjà connus de ce restaurant — pour juger concrètement de l'apport du modèle.
+      </p>
+      <button id="backtest-btn">Lancer la comparaison</button>
+      <div id="backtest-result" hidden>
+        <p id="backtest-summary" class="backtest-summary"></p>
+        <canvas id="backtest-chart" height="100"></canvas>
+      </div>
+      <p id="backtest-status" class="status"></p>
     </section>
   </main>
 
