@@ -3,6 +3,7 @@ d'un restaurant, à partir du jeu de données Kaggle Recruit Restaurant
 Visitor Forecasting (data/raw/air_visit_data.csv, data/raw/date_info.csv).
 """
 
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -15,11 +16,27 @@ DATA_DIR = str(ROOT / "data" / "raw")
 OUTPUT_DIR = str(ROOT / "data" / "output")
 
 
-def load_series(store_id: str) -> pd.DataFrame:
-    visits = pd.read_csv(f"{DATA_DIR}/air_visit_data.csv", parse_dates=["visit_date"])
-    dates = pd.read_csv(f"{DATA_DIR}/date_info.csv", parse_dates=["calendar_date"])
+@lru_cache(maxsize=1)
+def load_date_info() -> pd.DataFrame:
+    return pd.read_csv(f"{DATA_DIR}/date_info.csv", parse_dates=["calendar_date"]).set_index("calendar_date")
 
-    store = visits[visits["air_store_id"] == store_id].set_index("visit_date")["visitors"]
+
+@lru_cache(maxsize=1)
+def _visits_by_store() -> dict[str, pd.Series]:
+    """Groupe air_visit_data.csv par restaurant une seule fois par process
+    (au lieu de relire + refiltrer tout le fichier à chaque appel de
+    load_series) — y compris dans chaque worker d'un pool de processus, où
+    ce cache se construit à la première tâche traitée par ce worker et sert
+    pour toutes les suivantes."""
+    visits = pd.read_csv(f"{DATA_DIR}/air_visit_data.csv", parse_dates=["visit_date"])
+    return {
+        store_id: group.set_index("visit_date")["visitors"]
+        for store_id, group in visits.groupby("air_store_id")
+    }
+
+
+def load_series(store_id: str) -> pd.DataFrame:
+    store = _visits_by_store()[store_id]
     full_range = pd.date_range(store.index.min(), store.index.max(), freq="D")
     store = store.reindex(full_range)
     store.index.name = "visit_date"
@@ -28,7 +45,7 @@ def load_series(store_id: str) -> pd.DataFrame:
     store = store.fillna(0)
 
     df = store.to_frame("visitors")
-    df = df.join(dates.set_index("calendar_date")[["holiday_flg"]])
+    df = df.join(load_date_info()[["holiday_flg"]])
     return df
 
 

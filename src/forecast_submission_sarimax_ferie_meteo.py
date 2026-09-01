@@ -18,7 +18,7 @@ from statsmodels.tsa.statespace.sarimax import SARIMAX
 
 import exogenous
 from decompose_prototype import DATA_DIR, OUTPUT_DIR, load_series
-from forecast_submission_sarimax_ferie import FitTimeout, MIN_TRAIN_DAYS, future_holiday_flags, submission_targets, timeout
+from forecast_submission_sarimax_ferie import MIN_TRAIN_DAYS, future_holiday_flags, run_parallel, submission_targets, timeout
 
 FIT_TIMEOUT_S = 25
 
@@ -53,6 +53,26 @@ def fit_forecast(train: pd.DataFrame, exog_future: pd.DataFrame):
     return fitted.get_forecast(steps=len(exog_future), exog=exog_future[["holiday_flg", "temp_max", "precipitation"]])
 
 
+def forecast_one_store(store_id: str, horizon_end: pd.Timestamp, weather: pd.DataFrame) -> tuple[str, pd.Series, bool]:
+    train = load_series(store_id)
+    full_horizon = pd.date_range(train.index.max() + pd.Timedelta(days=1), horizon_end, freq="D")
+
+    if len(train) < MIN_TRAIN_DAYS:
+        return store_id, pd.Series(train["visitors"].mean(), index=full_horizon), True
+
+    try:
+        holiday_full = future_holiday_flags(full_horizon)
+        exog_future = holiday_full.join(weather.reindex(full_horizon))
+        train_exog = train.join(weather.reindex(train.index))
+        with timeout(FIT_TIMEOUT_S):
+            forecast = fit_forecast(train_exog, exog_future)
+        pred = pd.Series(forecast.predicted_mean.to_numpy(), index=full_horizon)
+        return store_id, pred, False
+    except Exception as exc:
+        print(f"  {store_id} : fallback moyenne ({exc})", flush=True)
+        return store_id, pd.Series(train["visitors"].mean(), index=full_horizon), True
+
+
 def main() -> None:
     sub = submission_targets()
     store_ids = sorted(sub["air_store_id"].unique())
@@ -67,42 +87,11 @@ def main() -> None:
         f"{horizon_dates.max().date()} ({len(horizon_dates)} jours) — SARIMAX + jour férié + météo"
     )
 
-    rows = []
-    start = time.time()
-    n_fallback = 0
-
-    for i, store_id in enumerate(store_ids, 1):
-        train = load_series(store_id)
+    def store_weather(store_id: str) -> tuple[pd.DataFrame]:
         lat, lon = locations.loc[store_id, "latitude"], locations.loc[store_id, "longitude"]
-        weather = weather_cache[(lat, lon)]
+        return (weather_cache[(lat, lon)],)
 
-        full_horizon = pd.date_range(
-            train.index.max() + pd.Timedelta(days=1), horizon_dates.max(), freq="D"
-        )
-
-        if len(train) < MIN_TRAIN_DAYS:
-            pred = pd.Series(train["visitors"].mean(), index=full_horizon)
-            n_fallback += 1
-        else:
-            try:
-                holiday_full = future_holiday_flags(full_horizon)
-                exog_future = holiday_full.join(weather.reindex(full_horizon))
-                train_exog = train.join(weather.reindex(train.index))
-                with timeout(FIT_TIMEOUT_S):
-                    forecast = fit_forecast(train_exog, exog_future)
-                pred = pd.Series(forecast.predicted_mean.to_numpy(), index=full_horizon)
-            except Exception as exc:
-                print(f"  {store_id} : fallback moyenne ({exc})", flush=True)
-                pred = pd.Series(train["visitors"].mean(), index=full_horizon)
-                n_fallback += 1
-
-        pred = pred.reindex(horizon_dates).clip(lower=0)
-
-        for date, p in zip(horizon_dates, pred.to_numpy()):
-            rows.append({"id": f"{store_id}_{date.date()}", "visitors": round(float(p), 1)})
-
-        if i % 10 == 0:
-            print(f"{i}/{len(store_ids)} traités ({time.time() - start:.0f}s écoulées)", flush=True)
+    rows, n_fallback = run_parallel(store_ids, horizon_dates, forecast_one_store, extra_args=store_weather)
 
     result = pd.DataFrame(rows)
     result = sub[["id"]].merge(result, on="id", how="left")
@@ -111,7 +100,6 @@ def main() -> None:
     out_path = f"{OUTPUT_DIR}/forecast_submission_sarimax_ferie_meteo.csv"
     result.to_csv(out_path, index=False)
 
-    print(f"Terminé en {time.time() - start:.0f}s")
     print(f"Prévisions de secours (historique trop court/échec fit) : {n_fallback}/{len(store_ids)}")
     print(f"{out_path} ({len(result)} lignes)")
 

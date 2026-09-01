@@ -109,7 +109,7 @@
 
             <div id="exog-file-picker" hidden>
               <input type="file" id="exog-file-input" accept=".csv" />
-              <p class="hint">Une série par date, appliquée à toutes les entités (jointure par date, sans découpage magasin/catégorie).</p>
+              <p class="hint">Sans colonne magasin/catégorie ci-dessous : une série par date, appliquée à toutes les entités. Avec l'une ou l'autre : une vraie valeur par entité, jointe en plus de la date (ex. onpromotion, propre à chaque magasin/catégorie).</p>
               <div id="exog-file-selects" hidden>
                 <div class="field-row">
                   <div class="field">
@@ -117,11 +117,22 @@
                     <select id="exog-date-col"></select>
                   </div>
                   <div class="field">
-                    <label for="exog-value-cols">Colonne(s) valeur (Ctrl/Cmd+clic pour plusieurs)</label>
-                    <select id="exog-value-cols" multiple></select>
+                    <label for="exog-value-cols">Colonne valeur</label>
+                    <select id="exog-value-cols"></select>
+                  </div>
+                </div>
+                <div class="field-row">
+                  <div class="field">
+                    <label for="exog-store-col">Colonne magasin (optionnel)</label>
+                    <select id="exog-store-col"><option value="">— Aucune (jointure par date seule) —</option></select>
+                  </div>
+                  <div class="field">
+                    <label for="exog-category-col">Colonne catégorie (optionnel)</label>
+                    <select id="exog-category-col"><option value="">— Aucune —</option></select>
                   </div>
                 </div>
                 <button id="exog-file-confirm-btn" type="button">Ajouter</button>
+                <p id="exog-file-status" class="status"></p>
               </div>
             </div>
 

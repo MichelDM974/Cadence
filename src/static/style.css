@@ -14,6 +14,7 @@
   --chart-band: rgba(192, 90, 42, 0.15);
   --accent-2: #3d6f97;
   --accent-3: #4a8f5c;
+  --danger: #b5432f;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -33,6 +34,7 @@
     --chart-band: rgba(224, 123, 70, 0.2);
     --accent-2: #7fb3dd;
     --accent-3: #6fc78a;
+    --danger: #e0705c;
   }
 }
 
@@ -52,6 +54,7 @@
   --chart-band: rgba(224, 123, 70, 0.2);
   --accent-2: #7fb3dd;
   --accent-3: #6fc78a;
+  --danger: #e0705c;
 }
 
 * { box-sizing: border-box; }
@@ -229,6 +232,14 @@ button + button {
   color: var(--muted);
   font-size: 0.85rem;
   min-height: 1.2em;
+}
+
+.status--ok {
+  color: var(--accent-3);
+}
+
+.status--error {
+  color: var(--danger);
 }
 
 .progress-bar {

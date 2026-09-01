@@ -47,9 +47,10 @@ function renderExogTags() {
     ...[...activeFileExog].map((col) => ({ key: `col:${col}`, label: col, remove: () => activeFileExog.delete(col) })),
   ];
   if (externalExogFile) {
+    const perEntity = externalExogFile.storeCol || externalExogFile.categoryCol;
     tags.push({
       key: "ext:file",
-      label: `${externalExogFile.file.name} (${externalExogFile.valueCols.join(", ")})`,
+      label: `${externalExogFile.file.name} (${externalExogFile.valueCols.join(", ")})${perEntity ? " — par entité" : ""}`,
       remove: () => {
         externalExogFile = null;
         el("exog-file-input").value = "";
@@ -106,6 +107,8 @@ function resetExogAddFlow() {
   el("exog-external-subtype-choice").hidden = true;
   el("exog-col-picker").hidden = true;
   el("exog-file-picker").hidden = true;
+  el("exog-file-status").textContent = "";
+  el("exog-file-status").className = "status";
   document.querySelectorAll("[data-exog-type], [data-exog-subtype]").forEach((btn) => btn.classList.remove("active"));
 }
 
@@ -176,24 +179,77 @@ function setupExogManager() {
     const delimiter = detectDelimiter(firstLine);
     const columns = firstLine.split(delimiter).map(stripQuotes);
 
-    const fill = (id) =>
-      (el(id).innerHTML = columns.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join(""));
-    fill("exog-date-col");
-    fill("exog-value-cols");
-    if (columns.length > 1) el("exog-value-cols").options[1].selected = true;
+    const options = columns.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
+    el("exog-date-col").innerHTML = options;
+    el("exog-value-cols").innerHTML = options;
+    el("exog-store-col").innerHTML = `<option value="">— Aucune (jointure par date seule) —</option>` + options;
+    el("exog-category-col").innerHTML = `<option value="">— Aucune —</option>` + options;
+    if (columns.length > 1) el("exog-value-cols").value = columns[1];
 
+    el("exog-file-status").textContent = "";
+    el("exog-file-status").className = "status";
     selectsDiv.hidden = false;
   });
 
-  el("exog-file-confirm-btn").addEventListener("click", () => {
+  el("exog-file-confirm-btn").addEventListener("click", async () => {
     const file = el("exog-file-input").files[0];
     const dateCol = el("exog-date-col").value;
-    const valueCols = [...el("exog-value-cols").selectedOptions].map((o) => o.value);
+    const valueCols = [el("exog-value-cols").value].filter(Boolean);
+    const storeCol = el("exog-store-col").value;
+    const categoryCol = el("exog-category-col").value;
     if (!file || !dateCol || !valueCols.length) return;
-    externalExogFile = { file, dateCol, valueCols };
-    renderExogTags();
-    updateExogAddChoices();
-    closeExogAddFlow();
+
+    const status = el("exog-file-status");
+    const btn = el("exog-file-confirm-btn");
+    const mainFile = el("file-input").files[0];
+    const mainDateCol = el("date-col").value;
+    if (!mainFile || !mainDateCol) {
+      status.textContent = "Choisis d'abord le fichier principal et sa colonne date.";
+      status.className = "status status--error";
+      return;
+    }
+
+    btn.disabled = true;
+    status.textContent = "Vérification du format...";
+    status.className = "status";
+    try {
+      const form = new FormData();
+      form.append("file", mainFile);
+      form.append("date_col", mainDateCol);
+      form.append("exog_file", file);
+      form.append("exog_date_col", dateCol);
+      form.append("exog_value_cols", valueCols.join(","));
+      if (storeCol) form.append("exog_store_col", storeCol);
+      if (categoryCol) form.append("exog_category_col", categoryCol);
+
+      const res = await fetch("/api/upload/exog/validate", { method: "POST", body: form });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail || "Format invalide");
+
+      const parts = [`Format correct${body.n_entities != null ? ` — ${body.n_entities} entité(s) détectée(s)` : ""}.`];
+      if (body.history_gap_days > 0) {
+        parts.push(
+          `⚠ ${body.history_gap_days} jour(s) d'historique non couverts avant le ${body.date_min} — ` +
+            `valeur reportée en arrière sur cette période, probablement fausse.`
+        );
+      }
+      parts.push(
+        body.days_covered > 0
+          ? `Fournit de vraies valeurs futures jusqu'à ${body.days_covered} jour(s) de prévision après le ${body.main_last_date}.`
+          : `Aucune vraie valeur future après le ${body.main_last_date} : la dernière valeur connue sera reportée sur tout l'horizon prédit.`
+      );
+      status.textContent = parts.join(" ");
+      status.className = `status ${body.history_gap_days > 0 || body.days_covered === 0 ? "status--error" : "status--ok"}`;
+
+      externalExogFile = { file, dateCol, valueCols, storeCol, categoryCol };
+      renderExogTags();
+      updateExogAddChoices();
+    } catch (err) {
+      status.textContent = err.message;
+      status.className = "status status--error";
+    } finally {
+      btn.disabled = false;
+    }
   });
 
   renderExogTags();
@@ -610,6 +666,8 @@ function appendExogFileFields(form, source) {
     form.append("exog_file", source.exogFile.file);
     form.append("exog_date_col", source.exogFile.dateCol);
     form.append("exog_value_cols", source.exogFile.valueCols.join(","));
+    if (source.exogFile.storeCol) form.append("exog_store_col", source.exogFile.storeCol);
+    if (source.exogFile.categoryCol) form.append("exog_category_col", source.exogFile.categoryCol);
   }
 }
 

@@ -305,30 +305,87 @@ def parse_form_list(value: str | None) -> list[str]:
     return [v.strip() for v in value.split(",") if v.strip()] if value else []
 
 
-def parse_external_exog(content: bytes, date_col: str, value_cols: list[str]) -> pd.DataFrame:
-    """Parse un fichier CSV externe (ex. prix du pétrole) en une série
-    quotidienne unique, indépendante des entités (magasin/catégorie) — un
-    simple alignement par date, en comblant les trous par report de la
-    dernière valeur connue (ex. week-ends absents d'un fichier de cours).
+def parse_external_exog(
+    content: bytes,
+    date_col: str,
+    value_cols: list[str],
+    store_col: str | None = None,
+    category_col: str | None = None,
+) -> pd.DataFrame:
+    """Parse un fichier CSV externe. Sans `store_col`/`category_col` (ex.
+    prix du pétrole) : une série quotidienne unique, indépendante des
+    entités — alignement par date seule. Avec l'un ou l'autre (ex.
+    onpromotion, propre à chaque magasin/catégorie) : garde une ligne par
+    (entité, date) — voir `external_exog_for_entity` / `_group_external_exog`
+    pour en isoler une entité, ou toutes regroupées d'un coup.
     """
+    group_cols = [c for c in (store_col, category_col) if c]
     raw = _read_csv_flexible(content)
-    if date_col not in raw.columns:
-        raise HTTPException(400, "Colonne date introuvable dans le fichier exogène")
-    for col in value_cols:
+    for col in (date_col, *group_cols, *value_cols):
         if col not in raw.columns:
-            raise HTTPException(400, "Colonne exogène introuvable dans le fichier externe")
+            raise HTTPException(400, "Colonne introuvable dans le fichier exogène")
 
-    s = raw[[date_col, *value_cols]].copy()
+    s = raw[[date_col, *group_cols, *value_cols]].copy()
     s[date_col] = pd.to_datetime(s[date_col], errors="coerce")
-    s = s.dropna(subset=[date_col]).groupby(date_col)[value_cols].mean()
-
+    s = s.dropna(subset=[date_col])
     if s.empty:
         raise HTTPException(400, "Fichier exogène vide ou dates illisibles")
 
+    if not group_cols:
+        s = s.groupby(date_col)[value_cols].mean()
+        full_range = pd.date_range(s.index.min(), s.index.max(), freq="D")
+        return s.reindex(full_range).ffill().bfill().rename_axis("date")
+
+    for col in group_cols:
+        s[col] = s[col].astype(str)
+    return s.reset_index(drop=True)
+
+
+def external_exog_for_entity(
+    external: pd.DataFrame,
+    date_col: str,
+    value_cols: list[str],
+    store_col: str | None,
+    store_value: str | None,
+    category_col: str | None,
+    category_value: str | None,
+) -> pd.DataFrame:
+    """Isole, dans un fichier exogène externe multi-entités (une ligne par
+    entité x date, cf. parse_external_exog), la série d'une seule entité —
+    jointure par magasin et/ou catégorie en plus de la date.
+    """
+    subset = external
+    for col, value in ((store_col, store_value), (category_col, category_value)):
+        if col:
+            subset = subset[subset[col] == str(value)]
+    if subset.empty:
+        raise HTTPException(400, "Aucune valeur exogène trouvée pour cette entité dans le fichier externe")
+
+    s = subset.groupby(date_col)[value_cols].mean()
     full_range = pd.date_range(s.index.min(), s.index.max(), freq="D")
-    s = s.reindex(full_range).ffill().bfill()
-    s.index.name = "date"
-    return s
+    return s.reindex(full_range).ffill().bfill().rename_axis("date")
+
+
+def _group_external_exog(
+    external: pd.DataFrame, date_col: str, value_cols: list[str], group_cols: list[str]
+) -> dict[tuple[str, ...], pd.DataFrame]:
+    """Regroupe un fichier exogène externe multi-entités par combinaison une
+    seule fois (même principe que group_indices dans _run_bulk_forecast)
+    plutôt que de le refiltrer à chaque entité — sur un gros fichier externe
+    (potentiellement des millions de lignes), ce serait le vrai goulot
+    d'étranglement, avant même l'ajustement des modèles.
+    """
+    if len(group_cols) == 1:
+        groups = {(key,): idx for key, idx in external.groupby(group_cols[0]).groups.items()}
+    else:
+        groups = dict(external.groupby(group_cols).groups.items())
+
+    result = {}
+    for combo, idx in groups.items():
+        s = external.loc[idx].groupby(date_col)[value_cols].mean()
+        full_range = pd.date_range(s.index.min(), s.index.max(), freq="D")
+        result[combo] = s.reindex(full_range).ffill().bfill().rename_axis("date")
+    return result
 
 
 def align_external_exog(external: pd.DataFrame, dates: pd.DatetimeIndex) -> pd.DataFrame:
@@ -341,14 +398,18 @@ def align_external_exog(external: pd.DataFrame, dates: pd.DatetimeIndex) -> pd.D
 
 
 async def load_external_exog(
-    exog_file: UploadFile | None, exog_date_col: str | None, exog_value_cols: str | None
+    exog_file: UploadFile | None,
+    exog_date_col: str | None,
+    exog_value_cols: str | None,
+    exog_store_col: str | None = None,
+    exog_category_col: str | None = None,
 ) -> pd.DataFrame | None:
     if exog_file is None:
         return None
     value_cols = parse_form_list(exog_value_cols)
     if not exog_date_col or not value_cols:
         raise HTTPException(400, "Colonnes du fichier exogène manquantes")
-    return parse_external_exog(await exog_file.read(), exog_date_col, value_cols)
+    return parse_external_exog(await exog_file.read(), exog_date_col, value_cols, exog_store_col, exog_category_col)
 
 
 def group_combinations(raw: pd.DataFrame, group_cols: list[str]) -> list[tuple[str, ...]]:
@@ -519,6 +580,64 @@ async def api_upload_columns_detect(
     return {"candidates": candidates}
 
 
+@app.post("/api/upload/exog/validate")
+async def api_upload_exog_validate(
+    file: UploadFile = File(...),
+    date_col: str = Form(...),
+    exog_file: UploadFile = File(...),
+    exog_date_col: str = Form(...),
+    exog_value_cols: str = Form(...),
+    exog_store_col: str | None = Form(None),
+    exog_category_col: str | None = Form(None),
+):
+    """Vérifie qu'un fichier exogène externe est exploitable (colonnes
+    présentes, dates lisibles — les mêmes erreurs que parse_external_exog,
+    remontées ici avant l'ajout plutôt qu'au moment de la prévision) et
+    indique jusqu'à combien de jours après la fin de l'historique du fichier
+    principal il fournit de vraies valeurs futures — au-delà, la dernière
+    valeur connue est reportée (cf. align_external_exog).
+    """
+    main_raw = _read_csv_flexible(await file.read())
+    if date_col not in main_raw.columns:
+        raise HTTPException(400, "Colonne date introuvable dans le fichier principal")
+    main_dates = pd.to_datetime(main_raw[date_col], errors="coerce").dropna()
+    if main_dates.empty:
+        raise HTTPException(400, "Dates illisibles dans le fichier principal")
+    main_first_date, main_last_date = main_dates.min(), main_dates.max()
+
+    value_cols = parse_form_list(exog_value_cols)
+    external = parse_external_exog(
+        await exog_file.read(), exog_date_col, value_cols, exog_store_col, exog_category_col
+    )
+
+    group_cols = [c for c in (exog_store_col, exog_category_col) if c]
+    if group_cols:
+        dates = pd.to_datetime(external[exog_date_col])
+        n_entities = len(external[group_cols].drop_duplicates())
+    else:
+        dates = external.index.to_series()
+        n_entities = None
+    date_min, date_max = dates.min(), dates.max()
+
+    # Au-delà de date_max, align_external_exog reporte la dernière valeur
+    # connue (pas une vraie prévision) ; avant date_min, c'est le même
+    # mécanisme en sens inverse — utile à savoir si le fichier exogène ne
+    # couvre pas tout l'historique d'entraînement.
+    days_covered = max(0, (date_max - main_last_date).days)
+    history_gap_days = max(0, (date_min - main_first_date).days)
+
+    return {
+        "ok": True,
+        "date_min": date_min.strftime("%Y-%m-%d"),
+        "date_max": date_max.strftime("%Y-%m-%d"),
+        "n_entities": n_entities,
+        "main_first_date": main_first_date.strftime("%Y-%m-%d"),
+        "main_last_date": main_last_date.strftime("%Y-%m-%d"),
+        "days_covered": days_covered,
+        "history_gap_days": history_gap_days,
+    }
+
+
 @app.post("/api/upload/analysis")
 async def api_upload_analysis(
     file: UploadFile = File(...),
@@ -553,6 +672,8 @@ async def api_upload_forecast(
     exog_file: UploadFile | None = File(None),
     exog_date_col: str | None = Form(None),
     exog_value_cols: str | None = Form(None),
+    exog_store_col: str | None = Form(None),
+    exog_category_col: str | None = Form(None),
     location: str | None = Form(None),
     use_ferie: bool = Form(True),
     use_vacances: bool = Form(True),
@@ -562,7 +683,12 @@ async def api_upload_forecast(
     df = parse_csv(
         await file.read(), date_col, value_col, store_col, store_value, category_col, category_value, extra_cols
     )
-    external_exog = await load_external_exog(exog_file, exog_date_col, exog_value_cols)
+    external_exog = await load_external_exog(exog_file, exog_date_col, exog_value_cols, exog_store_col, exog_category_col)
+    if external_exog is not None and (exog_store_col or exog_category_col):
+        external_exog = external_exog_for_entity(
+            external_exog, exog_date_col, parse_form_list(exog_value_cols),
+            exog_store_col, store_value, exog_category_col, category_value,
+        )
     exog_hist, exog_future = forecast_exog(
         df, horizon, location, use_ferie, use_vacances, use_meteo, extra_cols, external_exog
     )
@@ -583,6 +709,8 @@ async def api_upload_backtest(
     exog_file: UploadFile | None = File(None),
     exog_date_col: str | None = Form(None),
     exog_value_cols: str | None = Form(None),
+    exog_store_col: str | None = Form(None),
+    exog_category_col: str | None = Form(None),
     location: str | None = Form(None),
     use_ferie: bool = Form(True),
     use_vacances: bool = Form(True),
@@ -592,7 +720,12 @@ async def api_upload_backtest(
     df = parse_csv(
         await file.read(), date_col, value_col, store_col, store_value, category_col, category_value, extra_cols
     )
-    external_exog = await load_external_exog(exog_file, exog_date_col, exog_value_cols)
+    external_exog = await load_external_exog(exog_file, exog_date_col, exog_value_cols, exog_store_col, exog_category_col)
+    if external_exog is not None and (exog_store_col or exog_category_col):
+        external_exog = external_exog_for_entity(
+            external_exog, exog_date_col, parse_form_list(exog_value_cols),
+            exog_store_col, store_value, exog_category_col, category_value,
+        )
     exog_hist, exog_future = backtest_exog(
         df, horizon, location, use_ferie, use_vacances, use_meteo, extra_cols, external_exog
     )
@@ -614,6 +747,12 @@ def _run_bulk_forecast(
     use_meteo: bool,
     extra_cols: list[str],
     external_exog: pd.DataFrame | None,
+    store_col: str | None,
+    category_col: str | None,
+    exog_date_col: str | None,
+    exog_value_cols: list[str],
+    exog_store_col: str | None,
+    exog_category_col: str | None,
 ) -> None:
     job = bulk_jobs[job_id]
     try:
@@ -626,6 +765,24 @@ def _run_bulk_forecast(
             if key not in exog_cache:
                 exog_cache[key] = exogenous.location_exog(loc, dates)
             return exog_cache[key]
+
+        # Si le fichier exogène externe a une valeur par entité (magasin
+        # et/ou catégorie, ex. onpromotion) plutôt qu'une seule série
+        # globale (ex. prix du pétrole) : le regrouper une seule fois, même
+        # principe que group_indices ci-dessous pour le fichier principal.
+        exog_group_cols = [c for c in (exog_store_col, exog_category_col) if c]
+        external_by_entity = (
+            _group_external_exog(external_exog, exog_date_col, exog_value_cols, exog_group_cols)
+            if external_exog is not None and exog_group_cols
+            else None
+        )
+
+        # Dimension fixée (pas parcourue, une seule valeur) : constante après
+        # le filtrage de resolve_bulk_groups, lisible directement sur `raw`.
+        fixed_store_value = raw[store_col].iloc[0] if store_col and store_col not in group_cols and len(raw) else None
+        fixed_category_value = (
+            raw[category_col].iloc[0] if category_col and category_col not in group_cols and len(raw) else None
+        )
 
         combos = job["combos"]
         rows = []
@@ -671,9 +828,21 @@ def _run_bulk_forecast(
                 hist_parts.append(df[extra_cols])
                 last_values = df[extra_cols].iloc[-1]
                 future_parts.append(pd.DataFrame([last_values] * horizon, index=future_dates))
-            if external_exog is not None:
-                hist_parts.append(align_external_exog(external_exog, df.index))
-                future_parts.append(align_external_exog(external_exog, future_dates))
+
+            entity_exog = None
+            if external_by_entity is not None:
+                store_val = combo[group_cols.index(store_col)] if store_col in group_cols else fixed_store_value
+                category_val = (
+                    combo[group_cols.index(category_col)] if category_col in group_cols else fixed_category_value
+                )
+                key = tuple(v for c, v in ((exog_store_col, store_val), (exog_category_col, category_val)) if c)
+                entity_exog = external_by_entity.get(key)
+            elif external_exog is not None:
+                entity_exog = external_exog
+
+            if entity_exog is not None:
+                hist_parts.append(align_external_exog(entity_exog, df.index))
+                future_parts.append(align_external_exog(entity_exog, future_dates))
 
             exog_hist = pd.concat(hist_parts, axis=1) if hist_parts else None
             exog_future = pd.concat(future_parts, axis=1) if future_parts else None
@@ -785,6 +954,8 @@ async def api_upload_forecast_bulk_start(
     exog_file: UploadFile | None = File(None),
     exog_date_col: str | None = Form(None),
     exog_value_cols: str | None = Form(None),
+    exog_store_col: str | None = Form(None),
+    exog_category_col: str | None = Form(None),
     location: str | None = Form(None),
     use_ferie: bool = Form(True),
     use_vacances: bool = Form(True),
@@ -807,7 +978,7 @@ async def api_upload_forecast_bulk_start(
     for col in extra_cols:
         if col not in raw.columns:
             raise HTTPException(400, "Colonne exogène introuvable dans le CSV")
-    external_exog = await load_external_exog(exog_file, exog_date_col, exog_value_cols)
+    external_exog = await load_external_exog(exog_file, exog_date_col, exog_value_cols, exog_store_col, exog_category_col)
 
     raw, group_cols = resolve_bulk_groups(raw, store_col, store_value, category_col, category_value)
     if not group_cols:
@@ -830,6 +1001,8 @@ async def api_upload_forecast_bulk_start(
         args=(
             job_id, raw, date_col, value_col, group_cols, horizon, model, include_ci,
             location, use_ferie, use_vacances, use_meteo, extra_cols, external_exog,
+            store_col, category_col, exog_date_col, parse_form_list(exog_value_cols),
+            exog_store_col, exog_category_col,
         ),
         daemon=True,
     )

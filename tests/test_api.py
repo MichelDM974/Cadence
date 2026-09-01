@@ -1,12 +1,15 @@
 import pandas as pd
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 from api import (
     align_external_exog,
     analyze,
+    app,
     backtest,
     backtest_exog,
+    external_exog_for_entity,
     forecast,
     forecast_exog,
     group_combinations,
@@ -176,6 +179,133 @@ def test_align_external_exog_extends_beyond_known_range():
 
     assert len(aligned) == 3
     assert (aligned["price"] == 102).all()  # dernière valeur connue reportée sur le futur
+
+
+def make_external_csv_with_entities_bytes(rows):
+    lines = ["date,store,family,promo"] + [f"{d},{s},{f},{p}" for d, s, f, p in rows]
+    return "\n".join(lines).encode()
+
+
+def test_parse_external_exog_keeps_one_row_per_entity_and_date():
+    rows = [
+        ("2024-01-01", "1", "A", 5),
+        ("2024-01-02", "1", "A", 7),
+        ("2024-01-01", "2", "B", 0),
+        ("2024-01-02", "2", "B", 1),
+    ]
+    external = parse_external_exog(
+        make_external_csv_with_entities_bytes(rows), "date", ["promo"], store_col="store", category_col="family"
+    )
+
+    # contrairement au cas sans store_col/category_col, pas d'agrégation par
+    # date : une ligne par entité x date, prête à être filtrée par entité.
+    assert len(external) == 4
+    assert set(external["store"]) == {"1", "2"}
+
+
+def test_external_exog_for_entity_isolates_one_entity_with_real_future_values():
+    rows = [
+        ("2024-01-01", "1", "A", 5),
+        ("2024-01-02", "1", "A", 7),
+        ("2024-01-01", "2", "B", 0),
+        ("2024-01-02", "2", "B", 1),
+    ]
+    external = parse_external_exog(
+        make_external_csv_with_entities_bytes(rows), "date", ["promo"], store_col="store", category_col="family"
+    )
+
+    entity = external_exog_for_entity(external, "date", ["promo"], "store", "1", "family", "A")
+
+    assert len(entity) == 2
+    assert entity.loc["2024-01-01", "promo"] == 5
+    assert entity.loc["2024-01-02", "promo"] == 7  # varie vraiment, pas de report de la dernière valeur
+
+
+def test_external_exog_for_entity_rejects_unknown_entity():
+    rows = [("2024-01-01", "1", "A", 5)]
+    external = parse_external_exog(
+        make_external_csv_with_entities_bytes(rows), "date", ["promo"], store_col="store", category_col="family"
+    )
+
+    with pytest.raises(HTTPException):
+        external_exog_for_entity(external, "date", ["promo"], "store", "999", "family", "A")
+
+
+client = TestClient(app)
+
+
+def test_exog_validate_reports_full_future_coverage():
+    main_rows = [(f"2024-01-{d:02d}", 10 + d) for d in range(1, 11)]  # 2024-01-01 -> 2024-01-10
+    exog_rows = [
+        (f"2024-01-{d:02d}", "1", "A", d) for d in range(1, 21)  # couvre jusqu'au 2024-01-20
+    ]
+
+    resp = client.post(
+        "/api/upload/exog/validate",
+        files={
+            "file": ("main.csv", make_csv_bytes(main_rows), "text/csv"),
+            "exog_file": ("exog.csv", make_external_csv_with_entities_bytes(exog_rows), "text/csv"),
+        },
+        data={
+            "date_col": "date",
+            "exog_date_col": "date",
+            "exog_value_cols": "promo",
+            "exog_store_col": "store",
+            "exog_category_col": "family",
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["n_entities"] == 1
+    assert body["days_covered"] == 10  # 2024-01-20 - 2024-01-10
+    assert body["history_gap_days"] == 0  # couvre depuis avant le début de l'historique
+
+
+def test_exog_validate_reports_missing_history_coverage():
+    main_rows = [(f"2024-01-{d:02d}", 10 + d) for d in range(1, 11)]  # 2024-01-01 -> 2024-01-10
+    exog_rows = [(f"2024-01-{d:02d}", "1", "A", d) for d in range(8, 15)]  # ne commence que le 2024-01-08
+
+    resp = client.post(
+        "/api/upload/exog/validate",
+        files={
+            "file": ("main.csv", make_csv_bytes(main_rows), "text/csv"),
+            "exog_file": ("exog.csv", make_external_csv_with_entities_bytes(exog_rows), "text/csv"),
+        },
+        data={
+            "date_col": "date",
+            "exog_date_col": "date",
+            "exog_value_cols": "promo",
+            "exog_store_col": "store",
+            "exog_category_col": "family",
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["history_gap_days"] == 7  # 2024-01-08 - 2024-01-01
+
+
+def test_exog_validate_rejects_missing_column():
+    main_rows = [(f"2024-01-{d:02d}", 10 + d) for d in range(1, 11)]
+    exog_rows = [(f"2024-01-{d:02d}", "1", "A", d) for d in range(1, 11)]
+
+    resp = client.post(
+        "/api/upload/exog/validate",
+        files={
+            "file": ("main.csv", make_csv_bytes(main_rows), "text/csv"),
+            "exog_file": ("exog.csv", make_external_csv_with_entities_bytes(exog_rows), "text/csv"),
+        },
+        data={
+            "date_col": "date",
+            "exog_date_col": "date",
+            "exog_value_cols": "promo",
+            "exog_store_col": "nope",
+        },
+    )
+
+    assert resp.status_code == 400
 
 
 def _synthetic_series(n_days: int = 60) -> pd.DataFrame:
