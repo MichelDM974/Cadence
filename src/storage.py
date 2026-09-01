@@ -42,6 +42,11 @@ def init_db() -> None:
             )
             """
         )
+        # Nettoyage : les bases créées pendant l'expérimentation "verticaux"
+        # (abandonnée, cf. discussion produit) ont cette colonne en trop.
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(points_de_vente)")}
+        if "vertical" in columns:
+            conn.execute("ALTER TABLE points_de_vente DROP COLUMN vertical")
 
 
 def save_point(

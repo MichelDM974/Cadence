@@ -36,6 +36,39 @@ def test_save_list_load_delete(tmp_path, monkeypatch):
     assert storage.list_points() == []
 
 
+def test_migration_drops_vertical_column_from_existing_db(tmp_path, monkeypatch):
+    db_path = tmp_path / "legacy.db"
+    monkeypatch.setattr(storage, "DB_PATH", db_path)
+
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE points_de_vente (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            location TEXT,
+            vertical TEXT NOT NULL DEFAULT 'flux_physique',
+            use_ferie INTEGER NOT NULL DEFAULT 1,
+            use_vacances INTEGER NOT NULL DEFAULT 1,
+            use_meteo INTEGER NOT NULL DEFAULT 1,
+            series_json TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    storage.init_db()  # doit retirer la colonne héritée de l'expérimentation "verticaux"
+    columns = {row[1] for row in sqlite3.connect(db_path).execute("PRAGMA table_info(points_de_vente)")}
+    assert "vertical" not in columns
+
+    point_id = storage.save_point("Legacy", _sample_df(), None, True, True, True)
+    assert storage.load_point(point_id)["name"] == "Legacy"
+
+
 def test_load_missing_point_returns_none(tmp_path, monkeypatch):
     monkeypatch.setattr(storage, "DB_PATH", tmp_path / "test.db")
     storage.init_db()

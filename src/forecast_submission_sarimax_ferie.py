@@ -92,7 +92,6 @@ def main() -> None:
 
         if len(train) < MIN_TRAIN_DAYS:
             pred = pd.Series(train["visitors"].mean(), index=full_horizon)
-            lo = hi = pred
             n_fallback += 1
         else:
             try:
@@ -100,26 +99,18 @@ def main() -> None:
                 with timeout(FIT_TIMEOUT_S):
                     forecast = fit_forecast(train, exog_full)
                 pred = pd.Series(forecast.predicted_mean.to_numpy(), index=full_horizon)
-                ci = forecast.conf_int(alpha=0.2)
-                lo = pd.Series(ci.iloc[:, 0].to_numpy(), index=full_horizon)
-                hi = pd.Series(ci.iloc[:, 1].to_numpy(), index=full_horizon)
             except Exception as exc:
                 print(f"  {store_id} : fallback moyenne ({exc})", flush=True)
                 pred = pd.Series(train["visitors"].mean(), index=full_horizon)
-                lo = hi = pred
                 n_fallback += 1
 
         pred = pred.reindex(horizon_dates).clip(lower=0)
-        lo = lo.reindex(horizon_dates).clip(lower=0)
-        hi = hi.reindex(horizon_dates).clip(lower=0)
 
-        for date, p, l, h in zip(horizon_dates, pred.to_numpy(), lo.to_numpy(), hi.to_numpy()):
+        for date, p in zip(horizon_dates, pred.to_numpy()):
             rows.append(
                 {
                     "id": f"{store_id}_{date.date()}",
                     "visitors": round(float(p), 1),
-                    "ic_bas": round(float(l), 1),
-                    "ic_haut": round(float(h), 1),
                 }
             )
 
@@ -131,7 +122,7 @@ def main() -> None:
     result = sub[["id"]].merge(result, on="id", how="left")
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    out_path = f"{OUTPUT_DIR}/forecast_submission.csv"
+    out_path = f"{OUTPUT_DIR}/forecast_submission_sarimax_ferie.csv"
     result.to_csv(out_path, index=False)
 
     print(f"Terminé en {time.time() - start:.0f}s")

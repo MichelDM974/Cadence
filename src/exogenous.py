@@ -1,12 +1,14 @@
 """Enrichissement du calendrier à partir d'une localisation (ville ou code
-postal) : jours fériés, vacances scolaires, météo — variables exogènes
-optionnelles pour la décomposition et la prévision du rythme.
+postal, n'importe où dans le monde) : jours fériés, vacances scolaires,
+météo — variables exogènes optionnelles pour la décomposition et la
+prévision du rythme.
 
 Sources :
-- Géocodage : API Adresse (api-adresse.data.gouv.fr)
-- Vacances scolaires : data.education.gouv.fr (dataset fr-en-calendrier-scolaire)
-- Jours fériés : bibliothèque `holidays` (France, avec Alsace-Moselle)
-- Météo : Open-Meteo (archive historique + normales saisonnières pour le futur)
+- Géocodage : API de géocodage Open-Meteo (mondiale)
+- Jours fériés : bibliothèque `holidays` (tous pays supportés, avec Alsace-Moselle pour la France)
+- Vacances scolaires : data.education.gouv.fr (France uniquement — aucune source équivalente
+  intégrée pour les autres pays, la variable vaut 0 ailleurs)
+- Météo : Open-Meteo (archive historique + normales saisonnières pour le futur, mondiale)
 """
 
 from functools import lru_cache
@@ -53,24 +55,33 @@ ACADEMIE_CENTROIDS = {
 
 
 def geocode(query: str) -> dict:
-    """Géocode une ville ou un code postal via l'API Adresse (data.gouv.fr)."""
+    """Géocode une ville ou un code postal, n'importe où dans le monde, via
+    l'API de géocodage Open-Meteo.
+    """
     resp = requests.get(
-        "https://api-adresse.data.gouv.fr/search/",
-        params={"q": query, "limit": 1},
+        "https://geocoding-api.open-meteo.com/v1/search",
+        params={"name": query, "count": 1, "language": "fr", "format": "json"},
         timeout=10,
     )
     resp.raise_for_status()
-    features = resp.json().get("features", [])
-    if not features:
+    results = resp.json().get("results", [])
+    if not results:
         raise ValueError(f"Localisation introuvable : {query}")
 
-    props = features[0]["properties"]
-    lon, lat = features[0]["geometry"]["coordinates"]
+    place = results[0]
+    label = ", ".join(part for part in (place.get("name"), place.get("admin1"), place.get("country")) if part)
+    country_code = place.get("country_code", "")
+    postcodes = place.get("postcodes") or []
+    # Code département français (2 premiers chiffres du code postal) : sert
+    # uniquement à détecter l'Alsace-Moselle pour les jours fériés locaux.
+    depcode = postcodes[0][:2] if country_code == "FR" and postcodes else ""
+
     return {
-        "label": props.get("label"),
-        "lat": lat,
-        "lon": lon,
-        "depcode": props.get("depcode", ""),
+        "label": label,
+        "lat": place["latitude"],
+        "lon": place["longitude"],
+        "country_code": country_code,
+        "depcode": depcode,
     }
 
 
@@ -109,12 +120,18 @@ def vacation_flags(academie: str, dates: pd.DatetimeIndex) -> pd.Series:
     return flags
 
 
-def holiday_flags(depcode: str, dates: pd.DatetimeIndex) -> pd.Series:
-    """1 si le jour est férié en France (avec jours locaux Alsace-Moselle si pertinent)."""
-    subdiv = "Alsace-Moselle" if depcode in ALSACE_MOSELLE_DEPCODES else None
+def holiday_flags(country_code: str, depcode: str, dates: pd.DatetimeIndex) -> pd.Series:
+    """1 si le jour est férié dans le pays donné (jours locaux Alsace-Moselle
+    inclus pour la France si pertinent). Renvoie une série à 0 si le pays
+    n'est pas couvert par la bibliothèque `holidays`.
+    """
+    subdiv = "Alsace-Moselle" if country_code == "FR" and depcode in ALSACE_MOSELLE_DEPCODES else None
     years = sorted(set(dates.year)) or [pd.Timestamp.today().year]
-    fr_holidays = holidays.France(years=years, subdiv=subdiv)
-    return pd.Series([1 if d.date() in fr_holidays else 0 for d in dates], index=dates)
+    try:
+        country_holidays = holidays.country_holidays(country_code, subdiv=subdiv, years=years)
+    except NotImplementedError:
+        return pd.Series(0, index=dates)
+    return pd.Series([1 if d.date() in country_holidays else 0 for d in dates], index=dates)
 
 
 def _open_meteo_archive(lat: float, lon: float, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
@@ -182,14 +199,22 @@ def weather_series(lat: float, lon: float, dates: pd.DatetimeIndex) -> pd.DataFr
 
 def location_exog(loc: dict, dates: pd.DatetimeIndex) -> pd.DataFrame:
     """Construit les variables exogènes (jours fériés, vacances scolaires,
-    météo) pour une localisation géocodée et un ensemble de dates.
+    météo) pour une localisation géocodée et un ensemble de dates. Les
+    vacances scolaires ne sont disponibles que pour la France (seule source
+    de données intégrée) — elles valent 0 ailleurs, en filet de sécurité si
+    la variable est tout de même sollicitée pour un pays étranger.
     """
-    academie = nearest_academie(loc["lat"], loc["lon"])
     weather = weather_series(loc["lat"], loc["lon"], dates)
+    if loc["country_code"] == "FR":
+        academie = nearest_academie(loc["lat"], loc["lon"])
+        vacances = vacation_flags(academie, dates)
+    else:
+        vacances = pd.Series(0, index=dates)
+
     return pd.DataFrame(
         {
-            "ferie": holiday_flags(loc["depcode"], dates),
-            "vacances": vacation_flags(academie, dates),
+            "ferie": holiday_flags(loc["country_code"], loc["depcode"], dates),
+            "vacances": vacances,
             "temp_max": weather["temp_max"].to_numpy(),
             "precipitation": weather["precipitation"].to_numpy(),
         },

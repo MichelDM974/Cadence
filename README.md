@@ -12,6 +12,7 @@ Cadence traduit une problématique d'**analyse de séries temporelles** en langa
 - **Cible** : B2B et B2C, MVP centré B2B
 - **Scope** : Option B — verticaux spécialisés par secteur, chaque module encodant les composantes temporelles propres à son activité (saisonnalité métier, cycles hebdomadaires, effets calendaires spécifiques)
 - **Premier vertical MVP** : Restauration (prévision de couverts)
+- **Généralisation** : le moteur (décomposition + prévision) est agnostique du secteur, l'import CSV accepte n'importe quelle série quotidienne (date + valeur numérique). Une piste de "verticaux" avec presets d'exogènes par secteur a été explorée puis abandonnée : mathématiquement ça ne changeait que la présélection de 3 checkboxes déjà modifiables manuellement — sans valeur ajoutée réelle. L'utilisateur active/désactive directement jours fériés / vacances scolaires / météo selon ce qui est pertinent pour son activité
 
 ## Approche technique
 
@@ -34,11 +35,23 @@ Chaque flux de données client (couverts, CA, etc.) est traité comme une **sér
 
 ## État d'avancement
 
-- **Prototype technique validé** sur données réelles (Kaggle *Recruit Restaurant Visitor Forecasting*) : pipeline décomposition (STL) + prévision (SARIMAX) fonctionnel sur 800+ restaurants, testé en soumission Kaggle réelle (score 0.580 RMSLE, à comparer au 0.501 en tête de leaderboard — bon baseline, pas optimisé)
+- **Prototype technique validé** sur données réelles (Kaggle *Recruit Restaurant Visitor Forecasting*) : pipeline décomposition (STL) + prévision fonctionnel sur 800+ restaurants, testé en soumissions Kaggle réelles (têtes de leaderboard à 0.501 RMSLE, pour référence) — comparaison de 4 configurations, un modèle par restaurant à chaque fois (`src/forecast_submission_*.py`) :
+
+  | Configuration | Private RMSLE | Public RMSLE |
+  |---|---|---|
+  | SARIMAX + jour férié | **0.57956** | **0.51544** |
+  | SARIMAX seul (aucun exogène) | 0.58205 | 0.51553 |
+  | SARIMAX + jour férié + météo | 0.59146 | 0.51875 |
+  | Prophet + jour férié | 0.60576 | 0.55071 |
+
+  Enseignements : le jour férié aide à peine (écart quasi nul avec "aucun exogène") ; la météo est **activement nuisible** en SARIMAX (pire que sans rien) — trop de paramètres à estimer sur un historique court par restaurant ; Prophet reste nettement en retrait des trois variantes SARIMAX. Le plus gros levier de progression vers 0.501 est probablement l'architecture (un modèle global type LightGBM sur tous les restaurants plutôt qu'un modèle isolé par série) plutôt que le choix SARIMAX/Prophet — voir "À trancher"
 - **Web app locale fonctionnelle** (FastAPI + HTML/JS, `src/api.py` + `src/static/`) : décomposition (tendance/saisonnier/événementiel/résidu), indice de régularité, alertes de rupture, prévision avec intervalle de confiance, export CSV, thème clair/sombre/système
-- **Variables exogènes opérationnelles** pour données françaises, activables individuellement, à partir d'une simple ville/code postal saisie par l'utilisateur : jours fériés (avec Alsace-Moselle), vacances scolaires (par académie), météo (historique réelle + normales saisonnières pour le futur)
+- **Variables exogènes opérationnelles mondialement**, ajoutées une par une par l'utilisateur (aucune active par défaut), à partir d'une ville/code postal n'importe où dans le monde (géocodage Open-Meteo) : jours fériés (bibliothèque `holidays`, tous pays supportés, avec Alsace-Moselle pour la France), météo (historique réelle + normales saisonnières pour le futur, mondiale) ; vacances scolaires reste France uniquement (par académie, seule source de données intégrée — indisponible ailleurs, retirée de la liste des variables proposées hors France)
 - **Modèle validé contre une baseline naïve** : SARIMAX bat "même jour la semaine dernière" sur 91% des restaurants testés (818, backtest 28 jours), amélioration médiane +28,4% sur le MAE — voir `src/baseline_comparison.py` ; comparaison aussi exposée en direct dans l'app, par restaurant
+- **Second modèle de prévision : Prophet** — l'utilisateur choisit SARIMAX ou Prophet pour générer la prévision (section 4), et le backtest (section 5) compare désormais les deux modèles à la baseline naïve simultanément, pour voir concrètement lequel gagne sur telle série précise. Prophet reçoit les mêmes exogènes que SARIMAX (jours fériés/vacances/météo, en `add_regressor`) — comparaison à jeu de données égal
 - **Persistance locale** (SQLite, `src/storage.py`) : un CSV importé peut être sauvegardé comme "point de vente" (nom + série + localisation) et ré-analysé plus tard sans le ré-importer — pas encore de compte utilisateur, base locale partagée
+- **Import CSV multi-entités, à deux dimensions** : deux colonnes optionnelles ("magasin" et "catégorie", ex. famille de produits) permettent d'importer un fichier au format long avec jusqu'à deux niveaux de regroupement (une ligne par magasin × catégorie × jour, ex. dataset Kaggle *Store Sales - Time Series Forecasting*, 54 magasins × 33 catégories) — les colonnes candidates sont détectées automatiquement, l'utilisateur choisit ensuite la combinaison précise à analyser, comme pour le restaurant de démo. Un bouton dédié génère aussi un CSV de prévisions pour **toutes** les combinaisons du fichier en une fois (modèle au choix, job en arrière-plan avec suivi de progression, sans limite de taille — peut prendre plusieurs minutes sur un gros fichier)
+- **Variables exogènes venues du fichier importé lui-même** : les colonnes numériques déjà présentes dans le CSV (ex. `onpromotion`) peuvent être ajoutées comme régresseurs sans ressaisie, et un second fichier externe aligné sur les dates (ex. prix du pétrole) peut être uploadé et joint automatiquement — testé sur *Store Sales* avec un SARIMAX brut, sans ces exogènes, en baseline : 0.42726 RMSLE (0.37294 en tête de leaderboard), la piste onpromotion/oil/holidays reste à chiffrer
 - CI GitHub Actions (tests automatiques à chaque push/PR sur `main`)
 - Pour lancer en local : `uvicorn api:app` depuis `src/` (dépendances dans `requirements.txt`, tests dans `requirements-dev.txt`)
 
@@ -47,7 +60,7 @@ Chaque flux de données client (couverts, CA, etc.) est traité comme une **sér
 - Modèle économique (freemium, SaaS B2B pur, etc.)
 - Mode d'entrée des données à terme (upload vs connexion source, avec granularité temporelle variable — jour vs service)
 - Faisabilité d'export des données côté restaurateurs (formats disponibles depuis les POS/caisses usuels)
-- Choix des méthodes de modélisation (statistiques classiques type SARIMA/Prophet vs approches ML) — arbitrage à faire selon volume de données client ; SARIMAX retenu pour le prototype actuel, validé contre une baseline naïve (voir État d'avancement)
+- Choix des méthodes de modélisation (statistiques classiques type SARIMA/Prophet vs approches ML) — SARIMAX et Prophet coexistent désormais dans l'app (l'utilisateur compare), une approche ML (ex. LightGBM global sur plusieurs séries) reste à explorer si le volume de données le justifie
 - Besoin réel du B2C
 - Disponibilité domaine/marque "Cadence" (INPI)
 - Comptes utilisateurs / authentification : la persistance actuelle (SQLite) n'a pas de notion de compte, une seule base locale partagée par tous les points de vente

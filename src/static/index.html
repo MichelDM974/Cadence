@@ -46,20 +46,112 @@
         <label for="file-input">Fichier CSV</label>
         <input type="file" id="file-input" accept=".csv" />
         <div id="column-selects" hidden>
-          <label for="date-col">Colonne date</label>
-          <select id="date-col"></select>
-          <label for="value-col">Colonne couverts / CA</label>
-          <select id="value-col"></select>
+          <div class="field-row">
+            <div class="field">
+              <label for="date-col">Colonne date</label>
+              <select id="date-col"></select>
+            </div>
+            <div class="field">
+              <label for="value-col">Colonne valeur (couverts, CA, appels, unités...)</label>
+              <select id="value-col"></select>
+            </div>
+          </div>
+          <p id="columns-detect-status" class="hint"></p>
+          <div class="field-row">
+            <div class="field">
+              <label for="store-col">Colonne magasin (optionnel)</label>
+              <select id="store-col"><option value="">— Pas de distinction (toutes les lignes ensemble) —</option></select>
+            </div>
+            <div class="field" id="store-picker-row" hidden>
+              <label for="store-value-select">Magasin à analyser</label>
+              <select id="store-value-select"></select>
+              <p id="store-picker-status" class="status"></p>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="category-col">Colonne catégorie (optionnel, ex. famille de produits)</label>
+              <select id="category-col"><option value="">— Aucune 2e dimension —</option></select>
+            </div>
+            <div class="field" id="category-picker-row" hidden>
+              <label for="category-value-select">Catégorie à analyser</label>
+              <select id="category-value-select"></select>
+              <p id="category-picker-status" class="status"></p>
+            </div>
+          </div>
         </div>
-        <label for="location-input">Ville ou code postal (optionnel)</label>
-        <div class="autocomplete">
-          <input type="text" id="location-input" placeholder="ex. Lyon ou 69001" autocomplete="off" />
-          <ul id="location-suggestions" hidden></ul>
+        <div id="exog-manager" class="exog-category" hidden>
+          <label>Variables exogènes</label>
+          <div id="exog-active" class="exog-tags"></div>
+
+          <button id="exog-add-open-btn" type="button">+ Ajouter une variable exogène</button>
+
+          <div id="exog-add-flow" hidden>
+            <div id="exog-type-choice" class="exog-choice-row">
+              <button type="button" class="exog-choice-btn" data-exog-type="location">Autogénérée (par localisation)</button>
+              <button type="button" class="exog-choice-btn" data-exog-type="external">Externe</button>
+            </div>
+
+            <div id="exog-location-picker" class="exog-add-row" hidden>
+              <select id="exog-location-select"></select>
+              <button id="exog-location-confirm-btn" type="button">Ajouter</button>
+            </div>
+
+            <div id="exog-external-subtype-choice" class="exog-choice-row" hidden>
+              <button type="button" class="exog-choice-btn" data-exog-subtype="col">Colonne du fichier importé</button>
+              <button type="button" class="exog-choice-btn" data-exog-subtype="file">Fichier CSV externe</button>
+            </div>
+
+            <div id="exog-col-picker" class="exog-add-row" hidden>
+              <select id="exog-col-select"></select>
+              <button id="exog-col-confirm-btn" type="button">Ajouter</button>
+            </div>
+
+            <div id="exog-file-picker" hidden>
+              <input type="file" id="exog-file-input" accept=".csv" />
+              <p class="hint">Une série par date, appliquée à toutes les entités (jointure par date, sans découpage magasin/catégorie).</p>
+              <div id="exog-file-selects" hidden>
+                <div class="field-row">
+                  <div class="field">
+                    <label for="exog-date-col">Colonne date</label>
+                    <select id="exog-date-col"></select>
+                  </div>
+                  <div class="field">
+                    <label for="exog-value-cols">Colonne(s) valeur (Ctrl/Cmd+clic pour plusieurs)</label>
+                    <select id="exog-value-cols" multiple></select>
+                  </div>
+                </div>
+                <button id="exog-file-confirm-btn" type="button">Ajouter</button>
+              </div>
+            </div>
+
+            <button id="exog-add-cancel-btn" type="button" class="exog-cancel-btn">Annuler</button>
+          </div>
         </div>
-        <div id="exog-toggles" hidden>
-          <label><input type="checkbox" id="toggle-ferie" checked /> Jours fériés</label>
-          <label><input type="checkbox" id="toggle-vacances" checked /> Vacances scolaires</label>
-          <label><input type="checkbox" id="toggle-meteo" checked /> Météo</label>
+        <div id="location-row" hidden>
+          <label for="location-input">Ville ou code postal</label>
+          <div class="autocomplete">
+            <input type="text" id="location-input" placeholder="ex. Lyon ou 69001" autocomplete="off" />
+            <ul id="location-suggestions" hidden></ul>
+          </div>
+        </div>
+        <div id="bulk-forecast-row" hidden>
+          <label>Prévisions pour toutes les entités du fichier</label>
+          <div class="bulk-forecast-controls">
+            <input type="number" id="bulk-horizon-input" value="28" min="7" max="90" />
+            <select id="bulk-model-select">
+              <option value="sarimax">SARIMAX</option>
+              <option value="prophet">Prophet</option>
+            </select>
+            <label><input type="checkbox" id="bulk-ci-toggle" checked /> Inclure l'intervalle de confiance</label>
+            <button id="bulk-forecast-btn" type="button">Générer le CSV pour toutes les entités</button>
+            <span id="bulk-row-count" class="hint"></span>
+          </div>
+          <p class="hint">Peut prendre plusieurs minutes sur un gros fichier (un modèle est ajusté par entité).</p>
+          <div id="bulk-progress-bar" class="progress-bar" hidden>
+            <div id="bulk-progress-fill" class="progress-bar-fill"></div>
+          </div>
+          <p id="bulk-forecast-status" class="status"></p>
         </div>
         <div id="save-point-row" hidden>
           <label for="point-name-input">Nom du point de vente</label>
@@ -122,20 +214,29 @@
       <div class="forecast-controls">
         <label for="horizon-input">Horizon (jours)</label>
         <input type="number" id="horizon-input" value="28" min="7" max="90" />
+        <label for="model-select">Modèle</label>
+        <select id="model-select">
+          <option value="sarimax">SARIMAX</option>
+          <option value="prophet">Prophet</option>
+        </select>
         <button id="forecast-btn">Générer la prévision</button>
         <button id="download-btn" hidden>Télécharger (CSV)</button>
+        <label id="download-ci-label">
+          <input type="checkbox" id="download-ci-toggle" checked /> Inclure l'intervalle de confiance
+        </label>
       </div>
       <canvas id="forecast-chart" height="100"></canvas>
       <p id="forecast-status" class="status"></p>
 
-      <h2>5. Le modèle est-il fiable ?</h2>
+      <h2>5. Quel modèle est le plus fiable ?</h2>
       <p class="hint">
-        Compare la prévision SARIMAX à une estimation naïve ("même jour la semaine dernière") sur les derniers
-        jours déjà connus de ce restaurant — pour juger concrètement de l'apport du modèle.
+        Compare SARIMAX et Prophet à une estimation naïve ("même jour la semaine dernière") sur les derniers
+        jours déjà connus de cette activité — pour juger concrètement lequel apporte le plus de valeur.
       </p>
       <button id="backtest-btn">Lancer la comparaison</button>
       <div id="backtest-result" hidden>
         <p id="backtest-summary" class="backtest-summary"></p>
+        <div class="metrics" id="backtest-metrics"></div>
         <canvas id="backtest-chart" height="100"></canvas>
       </div>
       <p id="backtest-status" class="status"></p>

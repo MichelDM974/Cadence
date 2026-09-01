@@ -1,5 +1,6 @@
 pandas
 statsmodels
+prophet
 matplotlib
 fastapi
 uvicorn[standard]
