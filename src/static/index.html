@@ -34,6 +34,7 @@
       <div class="source-choice">
         <label><input type="radio" name="source" value="store" checked /> Restaurant de test (Kaggle)</label>
         <label><input type="radio" name="source" value="upload" /> Importer un CSV</label>
+        <label><input type="radio" name="source" value="point" /> Point de vente enregistré</label>
       </div>
 
       <div id="store-source">
@@ -60,6 +61,18 @@
           <label><input type="checkbox" id="toggle-vacances" checked /> Vacances scolaires</label>
           <label><input type="checkbox" id="toggle-meteo" checked /> Météo</label>
         </div>
+        <div id="save-point-row" hidden>
+          <label for="point-name-input">Nom du point de vente</label>
+          <input type="text" id="point-name-input" placeholder="ex. Bistrot du Port" />
+          <button id="save-point-btn" type="button">Enregistrer ce point de vente</button>
+          <p id="save-point-status" class="status"></p>
+        </div>
+      </div>
+
+      <div id="point-source" hidden>
+        <label for="point-select">Point de vente</label>
+        <select id="point-select"></select>
+        <button id="delete-point-btn" type="button">Supprimer ce point de vente</button>
       </div>
 
       <button id="analyze-btn" disabled>Analyser</button>

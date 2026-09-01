@@ -52,12 +52,23 @@ async function loadStores() {
     .join("");
 }
 
+async function loadPoints() {
+  const res = await fetch("/api/points");
+  const points = await res.json();
+  const select = el("point-select");
+  select.innerHTML = points.length
+    ? points.map((p) => `<option value="${p.id}">${p.name} (${p.n_days} jours)</option>`).join("")
+    : `<option value="">Aucun point de vente enregistré</option>`;
+  updateAnalyzeButtonState();
+}
+
 function setupSourceToggle() {
   document.querySelectorAll('input[name="source"]').forEach((radio) => {
     radio.addEventListener("change", (e) => {
-      const isStore = e.target.value === "store";
-      el("store-source").hidden = !isStore;
-      el("upload-source").hidden = isStore;
+      const source = e.target.value;
+      el("store-source").hidden = source !== "store";
+      el("upload-source").hidden = source !== "upload";
+      el("point-source").hidden = source !== "point";
       updateAnalyzeButtonState();
     });
   });
@@ -67,6 +78,8 @@ function updateAnalyzeButtonState() {
   const source = document.querySelector('input[name="source"]:checked').value;
   if (source === "store") {
     el("analyze-btn").disabled = !el("store-select").value;
+  } else if (source === "point") {
+    el("analyze-btn").disabled = !el("point-select").value;
   } else {
     el("analyze-btn").disabled = !(el("date-col").value && el("value-col").value);
   }
@@ -176,6 +189,7 @@ function setupFileInput() {
     if (columns.length > 1) el("value-col").value = columns[1];
 
     el("column-selects").hidden = false;
+    el("save-point-row").hidden = false;
     updateAnalyzeButtonState();
   });
 }
@@ -184,6 +198,9 @@ function currentSourceFromUI() {
   const source = document.querySelector('input[name="source"]:checked').value;
   if (source === "store") {
     return { type: "store", storeId: el("store-select").value };
+  }
+  if (source === "point") {
+    return { type: "point", pointId: el("point-select").value };
   }
   return {
     type: "upload",
@@ -200,6 +217,11 @@ function currentSourceFromUI() {
 async function fetchAnalysis(source) {
   if (source.type === "store") {
     const res = await fetch(`/api/stores/${source.storeId}/analysis`);
+    if (!res.ok) throw new Error((await res.json()).detail || "Erreur d'analyse");
+    return res.json();
+  }
+  if (source.type === "point") {
+    const res = await fetch(`/api/points/${source.pointId}/analysis`);
     if (!res.ok) throw new Error((await res.json()).detail || "Erreur d'analyse");
     return res.json();
   }
@@ -224,6 +246,11 @@ async function fetchForecast(source, horizon) {
     if (!res.ok) throw new Error((await res.json()).detail || "Erreur de prévision");
     return res.json();
   }
+  if (source.type === "point") {
+    const res = await fetch(`/api/points/${source.pointId}/forecast?horizon=${horizon}`);
+    if (!res.ok) throw new Error((await res.json()).detail || "Erreur de prévision");
+    return res.json();
+  }
   const form = new FormData();
   form.append("file", source.file);
   form.append("date_col", source.dateCol);
@@ -243,6 +270,11 @@ async function fetchForecast(source, horizon) {
 async function fetchBacktest(source, horizon) {
   if (source.type === "store") {
     const res = await fetch(`/api/stores/${source.storeId}/backtest?horizon=${horizon}`);
+    if (!res.ok) throw new Error((await res.json()).detail || "Erreur de comparaison");
+    return res.json();
+  }
+  if (source.type === "point") {
+    const res = await fetch(`/api/points/${source.pointId}/backtest?horizon=${horizon}`);
     if (!res.ok) throw new Error((await res.json()).detail || "Erreur de comparaison");
     return res.json();
   }
@@ -428,6 +460,49 @@ async function onBacktest() {
   }
 }
 
+async function onSavePoint() {
+  const status = el("save-point-status");
+  const name = el("point-name-input").value.trim();
+  if (!name) {
+    status.textContent = "Indique un nom pour ce point de vente.";
+    return;
+  }
+
+  const source = currentSourceFromUI();
+  const form = new FormData();
+  form.append("file", source.file);
+  form.append("date_col", source.dateCol);
+  form.append("value_col", source.valueCol);
+  form.append("name", name);
+  if (source.location) {
+    form.append("location", source.location);
+    form.append("use_ferie", source.useFerie);
+    form.append("use_vacances", source.useVacances);
+    form.append("use_meteo", source.useMeteo);
+  }
+
+  try {
+    status.textContent = "Enregistrement en cours...";
+    const res = await fetch("/api/points", { method: "POST", body: form });
+    if (!res.ok) throw new Error((await res.json()).detail || "Erreur d'enregistrement");
+    await loadPoints();
+    status.textContent = `"${name}" enregistré.`;
+  } catch (err) {
+    status.textContent = err.message;
+  }
+}
+
+async function onDeletePoint() {
+  const select = el("point-select");
+  const pointId = select.value;
+  if (!pointId) return;
+  const label = select.options[select.selectedIndex]?.textContent || "ce point de vente";
+  if (!confirm(`Supprimer ${label} ? Cette action est irréversible.`)) return;
+
+  await fetch(`/api/points/${pointId}`, { method: "DELETE" });
+  await loadPoints();
+}
+
 function rerenderCharts() {
   if (lastAnalysisData) renderAnalysis(lastAnalysisData);
   if (lastForecastData) renderForecast(lastForecastData);
@@ -471,11 +546,15 @@ function init() {
   setupFileInput();
   setupLocationInput();
   el("store-select").addEventListener("change", updateAnalyzeButtonState);
+  el("point-select").addEventListener("change", updateAnalyzeButtonState);
   el("analyze-btn").addEventListener("click", onAnalyze);
   el("forecast-btn").addEventListener("click", onForecast);
   el("download-btn").addEventListener("click", downloadForecastCsv);
   el("backtest-btn").addEventListener("click", onBacktest);
+  el("save-point-btn").addEventListener("click", onSavePoint);
+  el("delete-point-btn").addEventListener("click", onDeletePoint);
   loadStores().then(updateAnalyzeButtonState);
+  loadPoints();
 }
 
 init();

@@ -16,6 +16,7 @@ from statsmodels.tsa.seasonal import STL
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 
 import exogenous
+import storage
 from decompose_prototype import (
     DATA_DIR,
     detect_anomalies,
@@ -26,6 +27,7 @@ from decompose_prototype import (
 )
 
 app = FastAPI(title="Cadence API")
+storage.init_db()
 
 STATIC_DIR = Path(__file__).parent / "static"
 MIN_BACKTEST_TRAIN_DAYS = 90
@@ -165,6 +167,52 @@ def geocode_or_400(location: str) -> dict:
         raise HTTPException(502, f"Service de géocodage indisponible : {exc}") from exc
 
 
+def exog_columns(use_ferie: bool, use_vacances: bool, use_meteo: bool) -> list[str]:
+    columns = (["ferie"] if use_ferie else []) + (["vacances"] if use_vacances else [])
+    columns += ["temp_max", "precipitation"] if use_meteo else []
+    return columns
+
+
+def flags_and_weather(
+    df: pd.DataFrame, location: str | None, use_ferie: bool, use_vacances: bool, use_meteo: bool
+):
+    if not location:
+        return None, None
+    loc = geocode_or_400(location)
+    exog = exogenous.location_exog(loc, df.index)
+    flags = {}
+    if use_ferie:
+        flags["ferie"] = exog["ferie"]
+    if use_vacances:
+        flags["vacances"] = exog["vacances"]
+    weather = exog[["temp_max", "precipitation"]] if use_meteo else None
+    return flags, weather
+
+
+def forecast_exog(
+    df: pd.DataFrame, horizon: int, location: str | None, use_ferie: bool, use_vacances: bool, use_meteo: bool
+):
+    columns = exog_columns(use_ferie, use_vacances, use_meteo)
+    if not (location and columns):
+        return None, None
+    loc = geocode_or_400(location)
+    exog_hist = exogenous.location_exog(loc, df.index)[columns]
+    future_dates = pd.date_range(df.index.max() + pd.Timedelta(days=1), periods=horizon, freq="D")
+    exog_future = exogenous.location_exog(loc, future_dates)[columns]
+    return exog_hist, exog_future
+
+
+def backtest_exog(
+    df: pd.DataFrame, horizon: int, location: str | None, use_ferie: bool, use_vacances: bool, use_meteo: bool
+):
+    columns = exog_columns(use_ferie, use_vacances, use_meteo)
+    if not (location and columns):
+        return None, None
+    loc = geocode_or_400(location)
+    exog = exogenous.location_exog(loc, df.index)[columns]
+    return exog.iloc[:-horizon], exog.iloc[-horizon:]
+
+
 @app.get("/api/stores")
 def api_stores(n: int = 20):
     visits = pd.read_csv(f"{DATA_DIR}/air_visit_data.csv")
@@ -201,19 +249,7 @@ async def api_upload_analysis(
     use_meteo: bool = Form(True),
 ):
     df = parse_csv(await file.read(), date_col, value_col)
-
-    flags, weather = None, None
-    if location:
-        loc = geocode_or_400(location)
-        exog = exogenous.location_exog(loc, df.index)
-        flags = {}
-        if use_ferie:
-            flags["ferie"] = exog["ferie"]
-        if use_vacances:
-            flags["vacances"] = exog["vacances"]
-        if use_meteo:
-            weather = exog[["temp_max", "precipitation"]]
-
+    flags, weather = flags_and_weather(df, location, use_ferie, use_vacances, use_meteo)
     return analyze(df, flags=flags, weather=weather)
 
 
@@ -229,17 +265,7 @@ async def api_upload_forecast(
     use_meteo: bool = Form(True),
 ):
     df = parse_csv(await file.read(), date_col, value_col)
-
-    exog_hist, exog_future = None, None
-    columns = (["ferie"] if use_ferie else []) + (["vacances"] if use_vacances else [])
-    columns += ["temp_max", "precipitation"] if use_meteo else []
-
-    if location and columns:
-        loc = geocode_or_400(location)
-        exog_hist = exogenous.location_exog(loc, df.index)[columns]
-        future_dates = pd.date_range(df.index.max() + pd.Timedelta(days=1), periods=horizon, freq="D")
-        exog_future = exogenous.location_exog(loc, future_dates)[columns]
-
+    exog_hist, exog_future = forecast_exog(df, horizon, location, use_ferie, use_vacances, use_meteo)
     return forecast(df, horizon, exog_hist=exog_hist, exog_future=exog_future)
 
 
@@ -255,18 +281,70 @@ async def api_upload_backtest(
     use_meteo: bool = Form(True),
 ):
     df = parse_csv(await file.read(), date_col, value_col)
-
-    exog_hist, exog_future = None, None
-    columns = (["ferie"] if use_ferie else []) + (["vacances"] if use_vacances else [])
-    columns += ["temp_max", "precipitation"] if use_meteo else []
-
-    if location and columns:
-        loc = geocode_or_400(location)
-        exog = exogenous.location_exog(loc, df.index)[columns]
-        exog_hist = exog.iloc[:-horizon]
-        exog_future = exog.iloc[-horizon:]
-
+    exog_hist, exog_future = backtest_exog(df, horizon, location, use_ferie, use_vacances, use_meteo)
     return backtest(df, horizon, exog_hist=exog_hist, exog_future=exog_future)
+
+
+@app.post("/api/points")
+async def api_save_point(
+    file: UploadFile = File(...),
+    date_col: str = Form(...),
+    value_col: str = Form(...),
+    name: str = Form(...),
+    location: str | None = Form(None),
+    use_ferie: bool = Form(True),
+    use_vacances: bool = Form(True),
+    use_meteo: bool = Form(True),
+):
+    df = parse_csv(await file.read(), date_col, value_col)
+    point_id = storage.save_point(name, df, location, use_ferie, use_vacances, use_meteo)
+    return {"id": point_id, "name": name}
+
+
+@app.get("/api/points")
+def api_list_points():
+    return storage.list_points()
+
+
+@app.delete("/api/points/{point_id}")
+def api_delete_point(point_id: int):
+    if not storage.delete_point(point_id):
+        raise HTTPException(404, "Point de vente introuvable")
+    return {"deleted": True}
+
+
+def load_point_or_404(point_id: int) -> dict:
+    point = storage.load_point(point_id)
+    if point is None:
+        raise HTTPException(404, "Point de vente introuvable")
+    return point
+
+
+@app.get("/api/points/{point_id}/analysis")
+def api_point_analysis(point_id: int):
+    point = load_point_or_404(point_id)
+    flags, weather = flags_and_weather(
+        point["df"], point["location"], point["use_ferie"], point["use_vacances"], point["use_meteo"]
+    )
+    return analyze(point["df"], flags=flags, weather=weather)
+
+
+@app.get("/api/points/{point_id}/forecast")
+def api_point_forecast(point_id: int, horizon: int = Query(28, ge=7, le=90)):
+    point = load_point_or_404(point_id)
+    exog_hist, exog_future = forecast_exog(
+        point["df"], horizon, point["location"], point["use_ferie"], point["use_vacances"], point["use_meteo"]
+    )
+    return forecast(point["df"], horizon, exog_hist=exog_hist, exog_future=exog_future)
+
+
+@app.get("/api/points/{point_id}/backtest")
+def api_point_backtest(point_id: int, horizon: int = Query(28, ge=7, le=90)):
+    point = load_point_or_404(point_id)
+    exog_hist, exog_future = backtest_exog(
+        point["df"], horizon, point["location"], point["use_ferie"], point["use_vacances"], point["use_meteo"]
+    )
+    return backtest(point["df"], horizon, exog_hist=exog_hist, exog_future=exog_future)
 
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
