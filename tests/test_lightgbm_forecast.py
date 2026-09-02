@@ -5,7 +5,7 @@ import pandas as pd
 from fastapi.testclient import TestClient
 
 import lightgbm_forecast as lf
-from api import FORECAST_MODELS, align_external_exog, app, _daily_series
+from api import FORECAST_MODELS, align_external_exog, app, group_combinations, _daily_series
 
 client = TestClient(app)
 
@@ -24,7 +24,13 @@ def _multi_entity_frame(n_days: int, entities: list[tuple[str, str]]) -> pd.Data
 
 
 def _combos_and_indices(raw: pd.DataFrame, group_cols: list[str]):
-    combos = sorted(set(zip(*(raw[c].astype(str) for c in group_cols))))
+    # group_combinations (api.py) trie numériquement les identifiants
+    # ("2" < "9" < "10"), un ordre différent d'un tri lexicographique de
+    # chaînes — reproduire exactement l'ordre de production ici est
+    # important : c'est ce décalage d'ordre, entre la construction de
+    # future_exog et le tri interne de add_lag_features, qui a révélé le bug
+    # de ré-étiquetage corrigé dans predict_bulk.
+    combos = group_combinations(raw, group_cols)
     str_cols = {c: raw[c].astype(str) for c in group_cols}
     group_indices = dict(raw.groupby([str_cols[c] for c in group_cols]).groups.items())
     return combos, group_indices
@@ -115,6 +121,47 @@ def test_run_bulk_lightgbm_forecast_handles_horizon_beyond_lag_window():
     assert len(rows) == 40
     assert progress[-1] == (40, 40)
     assert all(r["prevision"] >= 0 for r in rows)
+
+
+def test_run_bulk_lightgbm_forecast_does_not_mix_up_entities():
+    """Régression : add_lag_features trie ses lignes en interne par
+    [*group_cols, "date"], un ordre différent de celui de future_exog/combos
+    — si predict_bulk réutilise l'ordre non trié pour étiqueter les
+    prévisions, elles se retrouvent attribuées à la mauvaise entité. Utilise
+    des identifiants magasin dont le tri lexicographique diffère du tri
+    numérique ("10" < "2" en tri de chaînes) et des niveaux de vente très
+    séparés, pour que tout mélange soit immédiatement visible.
+    """
+    # Assez de jours pour que chaque entité ait largement plus de lignes que
+    # min_data_in_leaf (sinon LightGBM ne peut pas former de feuille dédiée
+    # par entité et mélange les niveaux — un faux positif à ne pas confondre
+    # avec le vrai bug de ré-étiquetage visé par ce test).
+    dates = pd.date_range("2024-01-01", periods=200, freq="D")
+    levels = {"9": 5.0, "10": 500.0, "2": 50.0}
+    rows = [
+        {"date": d.strftime("%Y-%m-%d"), "store_nbr": store, "family": "A", "sales": level}
+        for store, level in levels.items()
+        for d in dates
+    ]
+    raw = pd.DataFrame(rows)
+    group_cols = ["store_nbr", "family"]
+    combos, group_indices = _combos_and_indices(raw, group_cols)
+
+    forecast_rows, skipped = lf.run_bulk_lightgbm_forecast(
+        raw, "date", "sales", group_cols, 5, combos, group_indices, [],
+        None, [],
+        None, None, None, None,
+        "store_nbr", "family", None, None,
+        _daily_series, align_external_exog, None,
+    )
+
+    assert skipped == set()
+    by_store = pd.DataFrame(forecast_rows).groupby("store_nbr")["prevision"].mean()
+    for store, level in levels.items():
+        assert abs(by_store[store] - level) < level * 0.5 + 5, (
+            f"magasin {store} (niveau réel {level}) a reçu une prévision moyenne de {by_store[store]} "
+            f"— probable mélange d'entités"
+        )
 
 
 def test_lightgbm_excluded_from_single_entity_forecast_models():

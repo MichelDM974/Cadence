@@ -212,17 +212,24 @@ def predict_bulk(
 
         combined = pd.concat([tail, day_exog], ignore_index=True, sort=False)
         combined = add_calendar_features(combined)
+        # add_lag_features trie par [*group_cols, "date"] en interne : l'ordre
+        # des lignes en sortie ne correspond plus à celui de `day_exog`. Les
+        # labels (group_cols/date) doivent donc être relus depuis `combined`
+        # elle-même, pas depuis `day_exog` — sinon les prévisions se
+        # retrouvent attribuées à la mauvaise entité (bug réel, détecté via
+        # un score Kaggle très dégradé : des magasins à volume quasi nul
+        # héritaient des prévisions de magasins à gros volume).
         combined = add_lag_features(combined, group_cols)
 
-        today_mask = combined["date"] == target_date
-        pred_y = booster.predict(combined.loc[today_mask, feature_cols])
+        today_rows = combined.loc[combined["date"] == target_date].reset_index(drop=True)
+        pred_y = booster.predict(today_rows[feature_cols])
         pred_visitors = np.clip(np.expm1(pred_y), 0, None)
 
-        day_result = day_exog[[*group_cols, "date"]].copy()
+        day_result = today_rows[[*group_cols, "date"]].copy()
         day_result["prevision"] = np.round(pred_visitors, 1)
         results.append(day_result)
 
-        predicted_rows = combined.loc[today_mask, tail.columns].copy()
+        predicted_rows = today_rows[tail.columns].copy()
         predicted_rows["visitors"] = pred_visitors
         tail = pd.concat([tail, predicted_rows], ignore_index=True, sort=False)
         rank_from_end = tail.groupby(group_cols, observed=True).cumcount(ascending=False)
