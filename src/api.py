@@ -6,6 +6,7 @@ fériés, vacances scolaires, météo). Sert aussi le frontend statique
 """
 
 import io
+import json
 import logging
 import os
 import threading
@@ -110,12 +111,14 @@ def forecast_sarimax(
     horizon: int,
     exog_hist: pd.DataFrame | None = None,
     exog_future: pd.DataFrame | None = None,
+    order: tuple[int, int, int] = (1, 1, 1),
+    seasonal_order: tuple[int, int, int, int] = (1, 1, 1, 7),
 ) -> dict:
     model = SARIMAX(
         df["visitors"],
         exog=exog_hist,
-        order=(1, 1, 1),
-        seasonal_order=(1, 1, 1, 7),
+        order=order,
+        seasonal_order=seasonal_order,
         enforce_stationarity=False,
         enforce_invertibility=False,
     )
@@ -137,6 +140,10 @@ def forecast_prophet(
     horizon: int,
     exog_hist: pd.DataFrame | None = None,
     exog_future: pd.DataFrame | None = None,
+    interval_width: float = 0.8,
+    changepoint_prior_scale: float = 0.05,
+    seasonality_prior_scale: float = 10.0,
+    seasonality_mode: str = "additive",
 ) -> dict:
     columns = list(exog_hist.columns) if exog_hist is not None else []
 
@@ -144,7 +151,12 @@ def forecast_prophet(
     if columns:
         train_df = train_df.join(exog_hist[columns].reset_index(drop=True))
 
-    model = Prophet(interval_width=0.8)
+    model = Prophet(
+        interval_width=interval_width,
+        changepoint_prior_scale=changepoint_prior_scale,
+        seasonality_prior_scale=seasonality_prior_scale,
+        seasonality_mode=seasonality_mode,
+    )
     for column in columns:
         model.add_regressor(column)
     model.fit(train_df)
@@ -179,10 +191,11 @@ def forecast(
     exog_hist: pd.DataFrame | None = None,
     exog_future: pd.DataFrame | None = None,
     model: str = "sarimax",
+    model_params: dict | None = None,
 ) -> dict:
     if model not in FORECAST_MODELS:
         raise HTTPException(400, f"Modèle inconnu : {model}")
-    return FORECAST_MODELS[model](df, horizon, exog_hist=exog_hist, exog_future=exog_future)
+    return FORECAST_MODELS[model](df, horizon, exog_hist=exog_hist, exog_future=exog_future, **(model_params or {}))
 
 
 def backtest(
@@ -192,11 +205,13 @@ def backtest(
     exog_future: pd.DataFrame | None = None,
     unit_label: str = "unités",
     models: tuple[str, ...] = ("sarimax", "prophet"),
+    model_params: dict[str, dict] | None = None,
 ) -> dict:
     """Compare, sur les derniers `horizon` jours déjà connus, la prévision de
     chaque modèle à une baseline naïve ("même jour la semaine dernière") —
     sert à montrer concrètement, pour cette activité précise, quel modèle
-    apporte le plus de valeur.
+    apporte le plus de valeur. `model_params` : réglages par modèle (clé =
+    nom du modèle), venus du panneau "Mon compte" côté app.
     """
     if len(df) < MIN_BACKTEST_TRAIN_DAYS + horizon:
         raise HTTPException(
@@ -207,10 +222,14 @@ def backtest(
 
     train, test = df.iloc[:-horizon], df.iloc[-horizon:]
     actual = test["visitors"].to_numpy()
+    model_params = model_params or {}
 
     predictions = {"naive": seasonal_naive_forecast(train["visitors"], horizon)}
     for model_name in models:
-        result = forecast(train, horizon, exog_hist=exog_hist, exog_future=exog_future, model=model_name)
+        result = forecast(
+            train, horizon, exog_hist=exog_hist, exog_future=exog_future, model=model_name,
+            model_params=model_params.get(model_name),
+        )
         predictions[model_name] = np.array(result["prevision"])
 
     mae = {name: float(np.abs(pred - actual).mean()) for name, pred in predictions.items()}
@@ -310,6 +329,21 @@ def parse_csv(
 
 def parse_form_list(value: str | None) -> list[str]:
     return [v.strip() for v in value.split(",") if v.strip()] if value else []
+
+
+def parse_model_params(raw: str | None) -> dict:
+    """Décode les réglages de modèle envoyés par le panneau "Mon compte"
+    (JSON, ex. `{"sarimax": {"order": [1,1,1], ...}}`). Absent/vide -> {}
+    (comportement par défaut inchangé)."""
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        raise HTTPException(400, "model_params : JSON invalide")
+    if not isinstance(parsed, dict):
+        raise HTTPException(400, "model_params : doit être un objet JSON")
+    return parsed
 
 
 def parse_external_exog(
@@ -540,16 +574,22 @@ def api_store_analysis(store_id: str):
 
 
 @app.get("/api/stores/{store_id}/forecast")
-def api_store_forecast(store_id: str, horizon: int = Query(28, ge=7, le=90), model: str = Query("sarimax")):
-    return forecast(load_series(store_id), horizon, model=model)
+def api_store_forecast(
+    store_id: str,
+    horizon: int = Query(28, ge=7, le=90),
+    model: str = Query("sarimax"),
+    model_params: str | None = Query(None),
+):
+    return forecast(load_series(store_id), horizon, model=model, model_params=parse_model_params(model_params).get(model))
 
 
 @app.get("/api/stores/{store_id}/backtest")
-def api_store_backtest(store_id: str, horizon: int = Query(28, ge=7, le=90)):
+def api_store_backtest(store_id: str, horizon: int = Query(28, ge=7, le=90), model_params: str | None = Query(None)):
     df = load_series(store_id)
     exog = df[["holiday_flg"]]
     return backtest(
-        df, horizon, exog_hist=exog.iloc[:-horizon], exog_future=exog.iloc[-horizon:], unit_label="couverts"
+        df, horizon, exog_hist=exog.iloc[:-horizon], exog_future=exog.iloc[-horizon:], unit_label="couverts",
+        model_params=parse_model_params(model_params),
     )
 
 
@@ -671,6 +711,7 @@ async def api_upload_forecast(
     value_col: str = Form(...),
     horizon: int = Form(28),
     model: str = Form("sarimax"),
+    model_params: str | None = Form(None),
     store_col: str | None = Form(None),
     store_value: str | None = Form(None),
     category_col: str | None = Form(None),
@@ -699,7 +740,10 @@ async def api_upload_forecast(
     exog_hist, exog_future = forecast_exog(
         df, horizon, location, use_ferie, use_vacances, use_meteo, extra_cols, external_exog
     )
-    return forecast(df, horizon, exog_hist=exog_hist, exog_future=exog_future, model=model)
+    return forecast(
+        df, horizon, exog_hist=exog_hist, exog_future=exog_future, model=model,
+        model_params=parse_model_params(model_params).get(model),
+    )
 
 
 @app.post("/api/upload/backtest")
@@ -708,6 +752,7 @@ async def api_upload_backtest(
     date_col: str = Form(...),
     value_col: str = Form(...),
     horizon: int = Form(28),
+    model_params: str | None = Form(None),
     store_col: str | None = Form(None),
     store_value: str | None = Form(None),
     category_col: str | None = Form(None),
@@ -736,7 +781,9 @@ async def api_upload_backtest(
     exog_hist, exog_future = backtest_exog(
         df, horizon, location, use_ferie, use_vacances, use_meteo, extra_cols, external_exog
     )
-    return backtest(df, horizon, exog_hist=exog_hist, exog_future=exog_future)
+    return backtest(
+        df, horizon, exog_hist=exog_hist, exog_future=exog_future, model_params=parse_model_params(model_params)
+    )
 
 
 def _run_bulk_forecast(
@@ -760,6 +807,7 @@ def _run_bulk_forecast(
     exog_value_cols: list[str],
     exog_store_col: str | None,
     exog_category_col: str | None,
+    model_params: dict[str, dict],
 ) -> None:
     job = bulk_jobs[job_id]
     try:
@@ -819,12 +867,16 @@ def _run_bulk_forecast(
             def on_progress(h: int, total_horizon: int) -> None:
                 job["processed"] = round(h / total_horizon * len(combos))
 
+            lgb_settings = dict(model_params.get("lightgbm") or {})
+            lgb_num_boost_round = lgb_settings.pop("num_boost_round", None)
+
             rows, skipped_combos = lightgbm_forecast.run_bulk_lightgbm_forecast(
                 raw, date_col, value_col, group_cols, horizon, combos, group_indices, extra_cols,
                 location_exog_cached if loc else None, columns if loc else [],
                 external_by_entity, external_exog, fixed_store_value, fixed_category_value,
                 store_col, category_col, exog_store_col, exog_category_col,
                 _daily_series, align_external_exog, on_progress,
+                lgb_settings or None, lgb_num_boost_round,
             )
             skipped = len(skipped_combos)
             job["processed"] = len(combos)
@@ -879,7 +931,8 @@ def _run_bulk_forecast(
                 exog_future = pd.concat(future_parts, axis=1) if future_parts else None
 
                 future = executor.submit(
-                    forecast, df, horizon, exog_hist=exog_hist, exog_future=exog_future, model=model
+                    forecast, df, horizon, exog_hist=exog_hist, exog_future=exog_future, model=model,
+                    model_params=model_params.get(model),
                 )
                 futures[future] = combo
 
@@ -982,6 +1035,7 @@ async def api_upload_forecast_bulk_start(
     category_value: str | None = Form(None),
     horizon: int = Form(28),
     model: str = Form("sarimax"),
+    model_params: str | None = Form(None),
     include_ci: bool = Form(True),
     extra_exog_cols: str | None = Form(None),
     exog_file: UploadFile | None = File(None),
@@ -1035,7 +1089,7 @@ async def api_upload_forecast_bulk_start(
             job_id, raw, date_col, value_col, group_cols, horizon, model, include_ci,
             location, use_ferie, use_vacances, use_meteo, extra_cols, external_exog,
             store_col, category_col, exog_date_col, parse_form_list(exog_value_cols),
-            exog_store_col, exog_category_col,
+            exog_store_col, exog_category_col, parse_model_params(model_params),
         ),
         daemon=True,
     )
@@ -1133,21 +1187,32 @@ def api_point_analysis(point_id: int):
 
 
 @app.get("/api/points/{point_id}/forecast")
-def api_point_forecast(point_id: int, horizon: int = Query(28, ge=7, le=90), model: str = Query("sarimax")):
+def api_point_forecast(
+    point_id: int,
+    horizon: int = Query(28, ge=7, le=90),
+    model: str = Query("sarimax"),
+    model_params: str | None = Query(None),
+):
     point = load_point_or_404(point_id)
     exog_hist, exog_future = forecast_exog(
         point["df"], horizon, point["location"], point["use_ferie"], point["use_vacances"], point["use_meteo"]
     )
-    return forecast(point["df"], horizon, exog_hist=exog_hist, exog_future=exog_future, model=model)
+    return forecast(
+        point["df"], horizon, exog_hist=exog_hist, exog_future=exog_future, model=model,
+        model_params=parse_model_params(model_params).get(model),
+    )
 
 
 @app.get("/api/points/{point_id}/backtest")
-def api_point_backtest(point_id: int, horizon: int = Query(28, ge=7, le=90)):
+def api_point_backtest(point_id: int, horizon: int = Query(28, ge=7, le=90), model_params: str | None = Query(None)):
     point = load_point_or_404(point_id)
     exog_hist, exog_future = backtest_exog(
         point["df"], horizon, point["location"], point["use_ferie"], point["use_vacances"], point["use_meteo"]
     )
-    return backtest(point["df"], horizon, exog_hist=exog_hist, exog_future=exog_future)
+    return backtest(
+        point["df"], horizon, exog_hist=exog_hist, exog_future=exog_future,
+        model_params=parse_model_params(model_params),
+    )
 
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

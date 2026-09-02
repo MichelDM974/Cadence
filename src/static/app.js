@@ -6,7 +6,8 @@ let lastForecastData = null;
 let lastForecastModel = null;
 let lastBacktestData = null;
 
-const el = (id) => document.getElementById(id);
+// el() et les fonctions/constantes de paramètres de modèles (loadModelParams,
+// modelParamsPayload, ...) viennent de model-params.js, chargé avant ce fichier.
 
 const MODEL_LABELS = { naive: "Naïve", sarimax: "SARIMAX", prophet: "Prophet" };
 
@@ -709,13 +710,14 @@ async function fetchAnalysis(source) {
 }
 
 async function fetchForecast(source, horizon, model) {
+  const modelParams = encodeURIComponent(JSON.stringify(modelParamsPayload()));
   if (source.type === "store") {
-    const res = await fetch(`/api/stores/${source.storeId}/forecast?horizon=${horizon}&model=${model}`);
+    const res = await fetch(`/api/stores/${source.storeId}/forecast?horizon=${horizon}&model=${model}&model_params=${modelParams}`);
     if (!res.ok) throw new Error((await res.json()).detail || "Erreur de prévision");
     return res.json();
   }
   if (source.type === "point") {
-    const res = await fetch(`/api/points/${source.pointId}/forecast?horizon=${horizon}&model=${model}`);
+    const res = await fetch(`/api/points/${source.pointId}/forecast?horizon=${horizon}&model=${model}&model_params=${modelParams}`);
     if (!res.ok) throw new Error((await res.json()).detail || "Erreur de prévision");
     return res.json();
   }
@@ -725,6 +727,7 @@ async function fetchForecast(source, horizon, model) {
   form.append("value_col", source.valueCol);
   form.append("horizon", horizon);
   form.append("model", model);
+  form.append("model_params", JSON.stringify(modelParamsPayload()));
   appendStoreFields(form, source);
   appendExogFileFields(form, source);
   if (source.location) {
@@ -739,13 +742,14 @@ async function fetchForecast(source, horizon, model) {
 }
 
 async function fetchBacktest(source, horizon) {
+  const modelParams = encodeURIComponent(JSON.stringify(modelParamsPayload()));
   if (source.type === "store") {
-    const res = await fetch(`/api/stores/${source.storeId}/backtest?horizon=${horizon}`);
+    const res = await fetch(`/api/stores/${source.storeId}/backtest?horizon=${horizon}&model_params=${modelParams}`);
     if (!res.ok) throw new Error((await res.json()).detail || "Erreur de comparaison");
     return res.json();
   }
   if (source.type === "point") {
-    const res = await fetch(`/api/points/${source.pointId}/backtest?horizon=${horizon}`);
+    const res = await fetch(`/api/points/${source.pointId}/backtest?horizon=${horizon}&model_params=${modelParams}`);
     if (!res.ok) throw new Error((await res.json()).detail || "Erreur de comparaison");
     return res.json();
   }
@@ -754,6 +758,7 @@ async function fetchBacktest(source, horizon) {
   form.append("date_col", source.dateCol);
   form.append("value_col", source.valueCol);
   form.append("horizon", horizon);
+  form.append("model_params", JSON.stringify(modelParamsPayload()));
   appendStoreFields(form, source);
   appendExogFileFields(form, source);
   if (source.location) {
@@ -806,16 +811,17 @@ function renderAnalysis(data) {
     weatherSection.hidden = true;
   }
 
-  const anomaliesSection = el("anomalies-section");
   const tbody = document.querySelector("#anomalies-table tbody");
-  if (data.anomalies.length) {
-    anomaliesSection.hidden = false;
-    tbody.innerHTML = data.anomalies
-      .map((a) => `<tr><td>${a.date}</td><td>${a.resid > 0 ? "+" : ""}${a.resid}</td></tr>`)
-      .join("");
-  } else {
-    anomaliesSection.hidden = true;
-  }
+  tbody.innerHTML = data.anomalies.length
+    ? data.anomalies.map((a) => `<tr><td>${a.date}</td><td>${a.resid > 0 ? "+" : ""}${a.resid}</td></tr>`).join("")
+    : `<tr><td colspan="2" class="hint">Aucune rupture détectée</td></tr>`;
+  // reste replié tant qu'on n'a pas cliqué sur le compteur "Ruptures détectées" —
+  // discret par défaut, une nouvelle analyse ne doit pas le rouvrir tout seul
+  el("anomalies-section").hidden = true;
+}
+
+function toggleAnomaliesSection() {
+  el("anomalies-section").hidden = !el("anomalies-section").hidden;
 }
 
 function renderForecast(data, model) {
@@ -926,7 +932,9 @@ async function onAnalyze() {
     status.textContent = "";
   } catch (err) {
     status.textContent = err.message;
+    return;
   }
+  onBacktest(); // section 4 : lancée automatiquement, pas d'action manuelle requise
 }
 
 async function onForecast() {
@@ -1042,6 +1050,7 @@ async function onBulkForecast() {
   appendExogFileFields(form, source);
   form.append("horizon", el("bulk-horizon-input").value);
   form.append("model", el("bulk-model-select").value);
+  form.append("model_params", JSON.stringify(modelParamsPayload()));
   form.append("include_ci", el("bulk-ci-toggle").checked);
   if (source.location) {
     form.append("location", source.location);
@@ -1131,8 +1140,38 @@ function setupThemeSwitch() {
   });
 }
 
+// Menu "Mon compte" : liste déroulante verticale (Apparence / Modèles).
+// "Apparence" ouvre un popup à côté du menu (thème) ; "Modèles" est un lien
+// vers une page séparée (models.html, cf. model-params.js/models.js).
+function setupAccountMenu() {
+  const dropdown = el("account-dropdown");
+  const appearancePopup = el("appearance-popup");
+
+  function closeAll() {
+    dropdown.hidden = true;
+    appearancePopup.hidden = true;
+  }
+
+  el("account-menu-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    const wasHidden = dropdown.hidden;
+    closeAll();
+    dropdown.hidden = !wasHidden;
+  });
+
+  el("account-appearance-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    appearancePopup.hidden = !appearancePopup.hidden;
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".account-menu")) closeAll();
+  });
+}
+
 function init() {
   setupThemeSwitch();
+  setupAccountMenu();
   setupSourceToggle();
   setupFileInput();
   setupLocationInput();
@@ -1146,6 +1185,13 @@ function init() {
     if (lastForecastData) renderForecast(lastForecastData, lastForecastModel);
   });
   el("backtest-btn").addEventListener("click", onBacktest);
+  el("anomalies-toggle").addEventListener("click", toggleAnomaliesSection);
+  el("anomalies-toggle").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggleAnomaliesSection();
+    }
+  });
   el("save-point-btn").addEventListener("click", onSavePoint);
   el("bulk-forecast-btn").addEventListener("click", onBulkForecast);
   el("bulk-horizon-input").addEventListener("input", updateBulkRowCount);

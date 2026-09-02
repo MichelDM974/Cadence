@@ -21,10 +21,19 @@
       <h1>Cadence</h1>
       <p>Prévision du rythme d'activité — décomposition, régularité, ruptures, prévision.</p>
     </div>
-    <div class="theme-switch" id="theme-switch">
-      <button type="button" data-theme-value="light">Clair</button>
-      <button type="button" data-theme-value="dark">Sombre</button>
-      <button type="button" data-theme-value="system">Système</button>
+    <div class="account-menu">
+      <button type="button" id="account-menu-btn" title="Paramètres" aria-label="Paramètres">⚙</button>
+      <div id="account-dropdown" class="account-dropdown" hidden>
+        <button type="button" id="account-appearance-btn" class="account-dropdown-item">Apparence</button>
+        <a href="models.html" class="account-dropdown-item">Modèles</a>
+      </div>
+      <div id="appearance-popup" class="appearance-popup" hidden>
+        <div class="theme-switch" id="theme-switch">
+          <button type="button" data-theme-value="light">Clair</button>
+          <button type="button" data-theme-value="dark">Sombre</button>
+          <button type="button" data-theme-value="system">Système</button>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -194,7 +203,7 @@
           <span class="metric-value" id="metric-regularity">–</span>
           <span class="metric-label">Indice de régularité</span>
         </div>
-        <div class="metric">
+        <div class="metric metric-clickable" id="anomalies-toggle" role="button" tabindex="0">
           <span class="metric-value" id="metric-anomalies">–</span>
           <span class="metric-label">Ruptures détectées</span>
         </div>
@@ -222,7 +231,21 @@
         </table>
       </div>
 
-      <h2>4. Prévision</h2>
+      <h2>4. Quel modèle est le plus fiable ?</h2>
+      <p class="hint">
+        Compare SARIMAX et Prophet à une estimation naïve ("même jour la semaine dernière") sur les derniers
+        jours déjà connus de cette activité — pour juger concrètement lequel apporte le plus de valeur. Lancée
+        automatiquement après l'analyse ; relance la comparaison si tu changes l'horizon.
+      </p>
+      <button id="backtest-btn">Relancer la comparaison</button>
+      <div id="backtest-result" hidden>
+        <p id="backtest-summary" class="backtest-summary"></p>
+        <div class="metrics" id="backtest-metrics"></div>
+        <canvas id="backtest-chart" height="100"></canvas>
+      </div>
+      <p id="backtest-status" class="status"></p>
+
+      <h2>5. Prévision</h2>
       <div class="forecast-controls">
         <label for="horizon-input">Horizon (jours)</label>
         <input type="number" id="horizon-input" value="28" min="7" max="90" />
@@ -239,22 +262,10 @@
       </div>
       <canvas id="forecast-chart" height="100"></canvas>
       <p id="forecast-status" class="status"></p>
-
-      <h2>5. Quel modèle est le plus fiable ?</h2>
-      <p class="hint">
-        Compare SARIMAX et Prophet à une estimation naïve ("même jour la semaine dernière") sur les derniers
-        jours déjà connus de cette activité — pour juger concrètement lequel apporte le plus de valeur.
-      </p>
-      <button id="backtest-btn">Lancer la comparaison</button>
-      <div id="backtest-result" hidden>
-        <p id="backtest-summary" class="backtest-summary"></p>
-        <div class="metrics" id="backtest-metrics"></div>
-        <canvas id="backtest-chart" height="100"></canvas>
-      </div>
-      <p id="backtest-status" class="status"></p>
     </section>
   </main>
 
+  <script src="model-params.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

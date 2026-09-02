@@ -102,6 +102,98 @@ header {
   color: var(--accent);
 }
 
+.account-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+
+#account-menu-btn {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  font-size: 1.2rem;
+  line-height: 1;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.account-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 14px var(--shadow);
+  padding: 6px;
+  gap: 2px;
+}
+
+.account-dropdown-item {
+  display: block;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  border-radius: 6px;
+  padding: 9px 12px;
+  font-size: 0.9rem;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.account-dropdown-item:hover,
+.account-dropdown-item:focus-visible {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.appearance-popup {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: calc(100% + 8px);
+  z-index: 20;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 14px var(--shadow);
+  padding: 10px;
+}
+
+.model-params-block {
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.model-params-block:first-of-type {
+  padding-top: 0;
+  border-top: none;
+}
+
+.model-params-block .field-row .field {
+  flex: 1 1 90px;
+  min-width: 80px;
+}
+
+.model-params-reset-btn {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  padding: 5px 12px;
+  font-size: 0.8rem;
+  margin-top: 4px;
+}
+
 header h1 {
   margin: 0;
   font-size: 1.8rem;
@@ -464,6 +556,16 @@ button + button {
   font-size: 0.8rem;
   color: var(--muted);
   margin-top: 2px;
+}
+
+.metric-clickable {
+  cursor: pointer;
+  transition: box-shadow 0.15s ease;
+}
+
+.metric-clickable:hover,
+.metric-clickable:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 .decomposition-grid {

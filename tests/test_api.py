@@ -15,6 +15,7 @@ from api import (
     group_combinations,
     parse_csv,
     parse_external_exog,
+    parse_model_params,
 )
 
 
@@ -357,6 +358,47 @@ def test_forecast_rejects_unknown_model():
     df = _synthetic_series()
     with pytest.raises(HTTPException):
         forecast(df, horizon=10, model="nope")
+
+
+def test_forecast_sarimax_respects_custom_order():
+    df = _synthetic_series()
+    default_result = forecast(df, horizon=10)
+    custom_result = forecast(df, horizon=10, model_params={"order": [2, 1, 2], "seasonal_order": [0, 1, 1, 7]})
+    assert default_result["prevision"] != custom_result["prevision"]
+
+
+def test_forecast_prophet_respects_custom_seasonality_mode():
+    df = _synthetic_series()
+    result = forecast(df, horizon=10, model="prophet", model_params={"seasonality_mode": "multiplicative"})
+    assert len(result["prevision"]) == 10
+
+
+def test_backtest_respects_model_params_per_model():
+    df = _synthetic_series(n_days=150)
+    result = backtest(
+        df, horizon=20,
+        model_params={"sarimax": {"order": [2, 1, 1]}, "prophet": {"changepoint_prior_scale": 0.5}},
+    )
+    assert set(result["predictions"]) == {"naive", "sarimax", "prophet"}
+
+
+def test_parse_model_params_empty_returns_empty_dict():
+    assert parse_model_params(None) == {}
+    assert parse_model_params("") == {}
+
+
+def test_parse_model_params_decodes_json():
+    assert parse_model_params('{"sarimax": {"order": [2, 1, 1]}}') == {"sarimax": {"order": [2, 1, 1]}}
+
+
+def test_parse_model_params_rejects_invalid_json():
+    with pytest.raises(HTTPException):
+        parse_model_params("not json")
+
+
+def test_parse_model_params_rejects_non_object():
+    with pytest.raises(HTTPException):
+        parse_model_params("[1, 2, 3]")
 
 
 def test_backtest_rejects_short_history():

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cadence — Modèles</title>
+  <script>
+    (function () {
+      var saved = localStorage.getItem("cadence-theme");
+      if (saved === "light" || saved === "dark") {
+        document.documentElement.dataset.theme = saved;
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Paramètres des modèles</h1>
+      <p><a href="index.html">← Retour à l'analyse</a></p>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel model-params-page">
+      <p class="hint">
+        Réglages avancés des modèles de prévision — mémorisés dans ce navigateur, envoyés à chaque
+        prévision/comparaison/génération en masse. À utiliser si tu sais ce que tu changes ; "Réinitialiser"
+        revient aux valeurs par défaut de Cadence.
+      </p>
+
+      <div class="model-params-block">
+        <h3>SARIMAX</h3>
+        <p class="hint">Ordre (p, d, q) et saisonnalité hebdomadaire (P, D, Q, s).</p>
+        <div class="field-row">
+          <div class="field"><label for="mp-sarimax-p">p</label><input type="number" id="mp-sarimax-p" min="0" max="5" step="1" /></div>
+          <div class="field"><label for="mp-sarimax-d">d</label><input type="number" id="mp-sarimax-d" min="0" max="2" step="1" /></div>
+          <div class="field"><label for="mp-sarimax-q">q</label><input type="number" id="mp-sarimax-q" min="0" max="5" step="1" /></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label for="mp-sarimax-bigp">P</label><input type="number" id="mp-sarimax-bigp" min="0" max="5" step="1" /></div>
+          <div class="field"><label for="mp-sarimax-bigd">D</label><input type="number" id="mp-sarimax-bigd" min="0" max="2" step="1" /></div>
+          <div class="field"><label for="mp-sarimax-bigq">Q</label><input type="number" id="mp-sarimax-bigq" min="0" max="5" step="1" /></div>
+          <div class="field"><label for="mp-sarimax-s">s</label><input type="number" id="mp-sarimax-s" min="1" max="365" step="1" /></div>
+        </div>
+        <button type="button" class="model-params-reset-btn" data-model="sarimax">Réinitialiser</button>
+      </div>
+
+      <div class="model-params-block">
+        <h3>Prophet</h3>
+        <div class="field-row">
+          <div class="field">
+            <label for="mp-prophet-interval">Intervalle de confiance</label>
+            <input type="number" id="mp-prophet-interval" min="0.5" max="0.99" step="0.05" />
+          </div>
+          <div class="field">
+            <label for="mp-prophet-cps">Flexibilité de tendance</label>
+            <input type="number" id="mp-prophet-cps" min="0.001" max="0.5" step="0.001" />
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="mp-prophet-sps">Force de la saisonnalité</label>
+            <input type="number" id="mp-prophet-sps" min="0.01" max="50" step="0.5" />
+          </div>
+          <div class="field">
+            <label for="mp-prophet-mode">Mode de saisonnalité</label>
+            <select id="mp-prophet-mode">
+              <option value="additive">Additive</option>
+              <option value="multiplicative">Multiplicative</option>
+            </select>
+          </div>
+        </div>
+        <button type="button" class="model-params-reset-btn" data-model="prophet">Réinitialiser</button>
+      </div>
+
+      <div class="model-params-block">
+        <h3>LightGBM</h3>
+        <p class="hint">Génération en masse uniquement.</p>
+        <div class="field-row">
+          <div class="field">
+            <label for="mp-lgb-lr">Taux d'apprentissage</label>
+            <input type="number" id="mp-lgb-lr" min="0.001" max="0.5" step="0.005" />
+          </div>
+          <div class="field">
+            <label for="mp-lgb-leaves">Feuilles par arbre</label>
+            <input type="number" id="mp-lgb-leaves" min="2" max="255" step="1" />
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="mp-lgb-mindata">Lignes min. par feuille</label>
+            <input type="number" id="mp-lgb-mindata" min="1" max="500" step="1" />
+          </div>
+          <div class="field">
+            <label for="mp-lgb-rounds">Nombre d'arbres</label>
+            <input type="number" id="mp-lgb-rounds" min="10" max="2000" step="10" />
+          </div>
+        </div>
+        <button type="button" class="model-params-reset-btn" data-model="lightgbm">Réinitialiser</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="model-params.js"></script>
+  <script src="models.js"></script>
+</body>
+</html>

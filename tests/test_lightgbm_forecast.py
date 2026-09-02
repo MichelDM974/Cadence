@@ -80,6 +80,25 @@ def test_run_bulk_lightgbm_forecast_returns_expected_shape():
     assert all(r["prevision"] >= 0 for r in rows)
 
 
+def test_run_bulk_lightgbm_forecast_accepts_custom_lgb_params():
+    raw = _multi_entity_frame(60, [("1", "A"), ("2", "B")])
+    group_cols = ["store_nbr", "family"]
+    combos, group_indices = _combos_and_indices(raw, group_cols)
+
+    rows, skipped = lf.run_bulk_lightgbm_forecast(
+        raw, "date", "sales", group_cols, 10, combos, group_indices, [],
+        None, [],
+        None, None, None, None,
+        "store_nbr", "family", None, None,
+        _daily_series, align_external_exog, None,
+        {"num_leaves": 7, "learning_rate": 0.2}, 15,
+    )
+
+    assert skipped == set()
+    assert len(rows) == len(combos) * 10
+    assert all(r["prevision"] >= 0 for r in rows)
+
+
 def test_run_bulk_lightgbm_forecast_skips_short_history_entities():
     raw = _multi_entity_frame(30, [("1", "A")])
     # ajoute une entité avec un historique trop court (< 21 jours, seuil de _daily_series)

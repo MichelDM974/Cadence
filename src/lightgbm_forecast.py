@@ -174,14 +174,22 @@ def _build_entity_frames(
     return history, future, skipped
 
 
-def train_bulk_model(train_df: pd.DataFrame, feature_cols: list[str], categorical_cols: list[str]) -> lgb.Booster:
+def train_bulk_model(
+    train_df: pd.DataFrame,
+    feature_cols: list[str],
+    categorical_cols: list[str],
+    lgb_params: dict | None = None,
+    num_boost_round: int | None = None,
+) -> lgb.Booster:
     dataset = lgb.Dataset(
         train_df[feature_cols],
         label=train_df["y"],
         categorical_feature=[c for c in categorical_cols if c in feature_cols],
         free_raw_data=False,
     )
-    return lgb.train(LGB_PARAMS, dataset, num_boost_round=NUM_BOOST_ROUND)
+    return lgb.train(
+        {**LGB_PARAMS, **(lgb_params or {})}, dataset, num_boost_round=num_boost_round or NUM_BOOST_ROUND
+    )
 
 
 def predict_bulk(
@@ -263,6 +271,8 @@ def run_bulk_lightgbm_forecast(
     daily_series_fn: Callable[..., pd.DataFrame],
     align_external_exog_fn: Callable[[pd.DataFrame, pd.DatetimeIndex], pd.DataFrame],
     on_progress: Callable[[int, int], None] | None = None,
+    lgb_params: dict | None = None,
+    num_boost_round: int | None = None,
 ) -> tuple[list[dict], set[tuple[str, ...]]]:
     """Point d'entrée appelé depuis _run_bulk_forecast (api.py) quand
     model == "lightgbm". Retourne (rows, skipped_combos) dans la forme
@@ -288,7 +298,7 @@ def run_bulk_lightgbm_forecast(
     non_feature = {"date", "visitors", "y", *group_cols}
     feature_cols = [c for c in train_df.columns if c not in non_feature]
 
-    booster = train_bulk_model(train_df, feature_cols, code_cols)
+    booster = train_bulk_model(train_df, feature_cols, code_cols, lgb_params, num_boost_round)
     predictions = predict_bulk(booster, history, future_exog, group_cols, feature_cols, horizon, on_progress)
 
     rows = []
