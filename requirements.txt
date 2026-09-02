@@ -1,6 +1,7 @@
 pandas
 statsmodels
 prophet
+lightgbm
 matplotlib
 fastapi
 uvicorn[standard]

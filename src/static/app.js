@@ -356,6 +356,16 @@ function updateBulkRowVisibility() {
   updateBulkRowCount();
 }
 
+// LightGBM entraîne un seul modèle global (voir lightgbm_forecast.py) et ne
+// calcule pas d'intervalle de confiance pour l'instant — la case est
+// désactivée plutôt que silencieusement ignorée côté serveur.
+function updateBulkCiAvailability() {
+  const isLightgbm = el("bulk-model-select").value === "lightgbm";
+  const ciToggle = el("bulk-ci-toggle");
+  ciToggle.disabled = isLightgbm;
+  if (isLightgbm) ciToggle.checked = false;
+}
+
 let bulkCountDebounce = null;
 let bulkCountRequestId = 0;
 
@@ -1139,6 +1149,8 @@ function init() {
   el("save-point-btn").addEventListener("click", onSavePoint);
   el("bulk-forecast-btn").addEventListener("click", onBulkForecast);
   el("bulk-horizon-input").addEventListener("input", updateBulkRowCount);
+  el("bulk-model-select").addEventListener("change", updateBulkCiAvailability);
+  updateBulkCiAvailability();
   el("delete-point-btn").addEventListener("click", onDeletePoint);
   loadStores().then(updateAnalyzeButtonState);
   loadPoints();

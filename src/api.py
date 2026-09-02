@@ -22,6 +22,7 @@ from statsmodels.tsa.seasonal import STL
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 
 import exogenous
+import lightgbm_forecast
 import storage
 from decompose_prototype import (
     DATA_DIR,
@@ -164,6 +165,12 @@ def forecast_prophet(
 
 
 FORECAST_MODELS = {"sarimax": forecast_sarimax, "prophet": forecast_prophet}
+
+# Modèles utilisables pour la génération en masse uniquement (section 4) :
+# lightgbm entraîne un seul modèle sur toutes les entités à la fois (cf.
+# lightgbm_forecast.py) — n'a de sens que là, jamais pour une entité seule,
+# donc volontairement absent de FORECAST_MODELS/forecast() ci-dessus.
+BULK_MODELS = {*FORECAST_MODELS, "lightgbm"}
 
 
 def forecast(
@@ -756,6 +763,9 @@ def _run_bulk_forecast(
 ) -> None:
     job = bulk_jobs[job_id]
     try:
+        if model not in BULK_MODELS:
+            raise HTTPException(400, f"Modèle inconnu : {model}")
+
         loc = geocode_or_400(location) if location else None
         columns = exog_columns(use_ferie, use_vacances, use_meteo)
         exog_cache: dict[tuple, pd.DataFrame] = {}
@@ -799,78 +809,101 @@ def _run_bulk_forecast(
         else:
             group_indices = dict(raw.groupby([str_cols[c] for c in group_cols]).groups.items())
 
-        # Chaque entité est indépendante : on ne fait dans cette boucle que du
-        # découpage de données (bon marché) et on envoie l'ajustement du
-        # modèle — la partie coûteuse — aux process du pool, en parallèle.
-        executor = get_bulk_executor()
-        futures = {}
-        for combo in combos:
-            idx = group_indices.get(combo)
-            if idx is None:
-                skipped += 1
-                job["processed"] += 1
-                continue
-            subset = raw.loc[idx]
+        if model == "lightgbm":
+            # Modèle global : un seul entraînement sur toutes les entités à
+            # la fois plutôt qu'un fit indépendant par entité — pas de pool
+            # de process (LightGBM parallélise nativement), pas d'intervalle
+            # de confiance en v1 (voir lightgbm_forecast.py).
+            include_ci = False
 
-            try:
-                df = _daily_series(subset, date_col, value_col, extra_cols)
-            except HTTPException:
-                skipped += 1
-                job["processed"] += 1
-                continue
+            def on_progress(h: int, total_horizon: int) -> None:
+                job["processed"] = round(h / total_horizon * len(combos))
 
-            future_dates = pd.date_range(df.index.max() + pd.Timedelta(days=1), periods=horizon, freq="D")
-            hist_parts, future_parts = [], []
-            if loc and columns:
-                hist_parts.append(location_exog_cached(df.index)[columns])
-                future_parts.append(location_exog_cached(future_dates)[columns])
-            if extra_cols:
-                hist_parts.append(df[extra_cols])
-                last_values = df[extra_cols].iloc[-1]
-                future_parts.append(pd.DataFrame([last_values] * horizon, index=future_dates))
+            rows, skipped_combos = lightgbm_forecast.run_bulk_lightgbm_forecast(
+                raw, date_col, value_col, group_cols, horizon, combos, group_indices, extra_cols,
+                location_exog_cached if loc else None, columns if loc else [],
+                external_by_entity, external_exog, fixed_store_value, fixed_category_value,
+                store_col, category_col, exog_store_col, exog_category_col,
+                _daily_series, align_external_exog, on_progress,
+            )
+            skipped = len(skipped_combos)
+            job["processed"] = len(combos)
+        else:
+            # Chaque entité est indépendante : on ne fait dans cette boucle
+            # que du découpage de données (bon marché) et on envoie
+            # l'ajustement du modèle — la partie coûteuse — aux process du
+            # pool, en parallèle.
+            executor = get_bulk_executor()
+            futures = {}
+            for combo in combos:
+                idx = group_indices.get(combo)
+                if idx is None:
+                    skipped += 1
+                    job["processed"] += 1
+                    continue
+                subset = raw.loc[idx]
 
-            entity_exog = None
-            if external_by_entity is not None:
-                store_val = combo[group_cols.index(store_col)] if store_col in group_cols else fixed_store_value
-                category_val = (
-                    combo[group_cols.index(category_col)] if category_col in group_cols else fixed_category_value
+                try:
+                    df = _daily_series(subset, date_col, value_col, extra_cols)
+                except HTTPException:
+                    skipped += 1
+                    job["processed"] += 1
+                    continue
+
+                future_dates = pd.date_range(df.index.max() + pd.Timedelta(days=1), periods=horizon, freq="D")
+                hist_parts, future_parts = [], []
+                if loc and columns:
+                    hist_parts.append(location_exog_cached(df.index)[columns])
+                    future_parts.append(location_exog_cached(future_dates)[columns])
+                if extra_cols:
+                    hist_parts.append(df[extra_cols])
+                    last_values = df[extra_cols].iloc[-1]
+                    future_parts.append(pd.DataFrame([last_values] * horizon, index=future_dates))
+
+                entity_exog = None
+                if external_by_entity is not None:
+                    store_val = combo[group_cols.index(store_col)] if store_col in group_cols else fixed_store_value
+                    category_val = (
+                        combo[group_cols.index(category_col)] if category_col in group_cols else fixed_category_value
+                    )
+                    key = tuple(v for c, v in ((exog_store_col, store_val), (exog_category_col, category_val)) if c)
+                    entity_exog = external_by_entity.get(key)
+                elif external_exog is not None:
+                    entity_exog = external_exog
+
+                if entity_exog is not None:
+                    hist_parts.append(align_external_exog(entity_exog, df.index))
+                    future_parts.append(align_external_exog(entity_exog, future_dates))
+
+                exog_hist = pd.concat(hist_parts, axis=1) if hist_parts else None
+                exog_future = pd.concat(future_parts, axis=1) if future_parts else None
+
+                future = executor.submit(
+                    forecast, df, horizon, exog_hist=exog_hist, exog_future=exog_future, model=model
                 )
-                key = tuple(v for c, v in ((exog_store_col, store_val), (exog_category_col, category_val)) if c)
-                entity_exog = external_by_entity.get(key)
-            elif external_exog is not None:
-                entity_exog = external_exog
+                futures[future] = combo
 
-            if entity_exog is not None:
-                hist_parts.append(align_external_exog(entity_exog, df.index))
-                future_parts.append(align_external_exog(entity_exog, future_dates))
+            for future in as_completed(futures):
+                combo = futures[future]
+                try:
+                    result = future.result()
+                except Exception:
+                    skipped += 1
+                    job["processed"] += 1
+                    continue
 
-            exog_hist = pd.concat(hist_parts, axis=1) if hist_parts else None
-            exog_future = pd.concat(future_parts, axis=1) if future_parts else None
+                for date, prevision, ic_bas, ic_haut in zip(
+                    result["dates"], result["prevision"], result["ic_bas"], result["ic_haut"]
+                ):
+                    row = dict(zip(group_cols, combo))
+                    row["date"] = date
+                    row["prevision"] = prevision
+                    if include_ci:
+                        row["ic_bas"] = ic_bas
+                        row["ic_haut"] = ic_haut
+                    rows.append(row)
 
-            future = executor.submit(forecast, df, horizon, exog_hist=exog_hist, exog_future=exog_future, model=model)
-            futures[future] = combo
-
-        for future in as_completed(futures):
-            combo = futures[future]
-            try:
-                result = future.result()
-            except Exception:
-                skipped += 1
                 job["processed"] += 1
-                continue
-
-            for date, prevision, ic_bas, ic_haut in zip(
-                result["dates"], result["prevision"], result["ic_bas"], result["ic_haut"]
-            ):
-                row = dict(zip(group_cols, combo))
-                row["date"] = date
-                row["prevision"] = prevision
-                if include_ci:
-                    row["ic_bas"] = ic_bas
-                    row["ic_haut"] = ic_haut
-                rows.append(row)
-
-            job["processed"] += 1
 
         if not rows:
             job["status"] = "error"

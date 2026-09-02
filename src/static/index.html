@@ -153,12 +153,13 @@
             <select id="bulk-model-select">
               <option value="sarimax">SARIMAX</option>
               <option value="prophet">Prophet</option>
+              <option value="lightgbm">LightGBM</option>
             </select>
             <label><input type="checkbox" id="bulk-ci-toggle" checked /> Inclure l'intervalle de confiance</label>
             <button id="bulk-forecast-btn" type="button">Générer le CSV pour toutes les entités</button>
             <span id="bulk-row-count" class="hint"></span>
           </div>
-          <p class="hint">Peut prendre plusieurs minutes sur un gros fichier (un modèle est ajusté par entité).</p>
+          <p class="hint">SARIMAX/Prophet : un modèle ajusté par entité, peut prendre plusieurs minutes sur un gros fichier. LightGBM : un seul modèle entraîné sur toutes les entités à la fois (mutualise le signal entre entités) — sans intervalle de confiance pour l'instant.</p>
           <div id="bulk-progress-bar" class="progress-bar" hidden>
             <div id="bulk-progress-fill" class="progress-bar-fill"></div>
           </div>
