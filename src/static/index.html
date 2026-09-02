@@ -164,6 +164,7 @@
               <option value="prophet">Prophet</option>
               <option value="lightgbm">LightGBM</option>
             </select>
+            <select id="bulk-model-config"></select>
             <label><input type="checkbox" id="bulk-ci-toggle" checked /> Inclure l'intervalle de confiance</label>
             <button id="bulk-forecast-btn" type="button">Générer le CSV pour toutes les entités</button>
             <span id="bulk-row-count" class="hint"></span>
@@ -203,7 +204,7 @@
           <span class="metric-value" id="metric-regularity">–</span>
           <span class="metric-label">Indice de régularité</span>
         </div>
-        <div class="metric metric-clickable" id="anomalies-toggle" role="button" tabindex="0">
+        <div class="metric">
           <span class="metric-value" id="metric-anomalies">–</span>
           <span class="metric-label">Ruptures détectées</span>
         </div>
@@ -223,8 +224,10 @@
         <canvas id="weather-chart" height="100"></canvas>
       </div>
 
-      <div id="anomalies-section" hidden>
-        <h3>Ruptures de rythme</h3>
+      <button type="button" id="anomalies-tab" class="collapsible-tab" aria-expanded="false" aria-controls="anomalies-section">
+        <span class="collapsible-tab-icon">▸</span> Ruptures de rythme
+      </button>
+      <div id="anomalies-section" class="collapsible-panel" hidden>
         <table id="anomalies-table">
           <thead><tr><th>Date</th><th>Écart résiduel</th></tr></thead>
           <tbody></tbody>
@@ -237,7 +240,21 @@
         jours déjà connus de cette activité — pour juger concrètement lequel apporte le plus de valeur. Lancée
         automatiquement après l'analyse ; relance la comparaison si tu changes l'horizon.
       </p>
-      <button id="backtest-btn">Relancer la comparaison</button>
+      <div class="forecast-controls">
+        <label for="horizon-input">Horizon (jours)</label>
+        <input type="number" id="horizon-input" value="28" min="7" max="90" />
+        <button id="backtest-btn">Relancer la comparaison</button>
+        <button id="autotune-btn" type="button">Optimiser les paramètres</button>
+      </div>
+      <div class="forecast-controls">
+        <label for="backtest-sarimax-config">Config SARIMAX</label>
+        <select id="backtest-sarimax-config"></select>
+        <button type="button" id="backtest-sarimax-save-btn" class="save-config-btn" title="Enregistrer la configuration SARIMAX actuelle sous un nom">Enregistrer</button>
+        <label for="backtest-prophet-config">Config Prophet</label>
+        <select id="backtest-prophet-config"></select>
+        <button type="button" id="backtest-prophet-save-btn" class="save-config-btn" title="Enregistrer la configuration Prophet actuelle sous un nom">Enregistrer</button>
+      </div>
+      <p id="autotune-status" class="status"></p>
       <div id="backtest-result" hidden>
         <p id="backtest-summary" class="backtest-summary"></p>
         <div class="metrics" id="backtest-metrics"></div>
@@ -246,9 +263,8 @@
       <p id="backtest-status" class="status"></p>
 
       <h2>5. Prévision</h2>
+      <p class="hint">Utilise le même horizon (en jours) que la comparaison de l'étape 4.</p>
       <div class="forecast-controls">
-        <label for="horizon-input">Horizon (jours)</label>
-        <input type="number" id="horizon-input" value="28" min="7" max="90" />
         <label for="model-select">Modèle</label>
         <select id="model-select">
           <option value="sarimax">SARIMAX</option>

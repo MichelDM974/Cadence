@@ -7,6 +7,7 @@ from api import (
     align_external_exog,
     analyze,
     app,
+    autotune,
     backtest,
     backtest_exog,
     external_exog_for_entity,
@@ -418,6 +419,63 @@ def test_backtest_returns_comparison():
     assert set(result["mae"]) == {"naive", "sarimax", "prophet"}
     assert set(result["improvement_pct"]) == {"sarimax", "prophet"}
     assert result["unit_label"] == "appels"
+
+
+def test_autotune_rejects_short_history():
+    df = _synthetic_series(n_days=60)
+    with pytest.raises(HTTPException):
+        autotune(df, horizon=28)
+
+
+def test_autotune_returns_better_or_equal_sarimax_params():
+    df = _synthetic_series(n_days=150)
+    result = autotune(df, horizon=20, models=("sarimax",))
+    assert "sarimax" in result
+    assert "prophet" not in result
+    assert len(result["sarimax"]["order"]) == 3
+    assert len(result["sarimax"]["seasonal_order"]) == 4
+    assert result["sarimax"]["mae_after"] <= result["sarimax"]["mae_before"]
+
+
+def test_autotune_sarimax_keeps_d_and_bigd_fixed_at_one():
+    # d/D quasi toujours optimaux à 1 en pratique : la recherche ne les fait
+    # pas varier, elle se concentre sur p/q/P/Q (cf. discussion produit).
+    df = _synthetic_series(n_days=150)
+    result = autotune(df, horizon=20, models=("sarimax",))
+    assert result["sarimax"]["order"][1] == 1  # d
+    assert result["sarimax"]["seasonal_order"][1] == 1  # D
+
+
+def test_autotune_sarimax_never_regresses_vs_current_config(monkeypatch):
+    # Si la config déjà en place bat tout ce que la descente par coordonnées
+    # trouve (ici forcée à un résultat volontairement mauvais), autotune doit
+    # la conserver telle quelle plutôt que de renvoyer un résultat pire.
+    import api
+
+    monkeypatch.setattr(
+        api, "_sarimax_coordinate_search", lambda *a, **k: ({"order": [2, 1, 2], "seasonal_order": [2, 1, 2, 7]}, 9999.0)
+    )
+    df = _synthetic_series(n_days=150)
+    current = {"sarimax": {"order": [3, 1, 0], "seasonal_order": [0, 1, 3, 7]}}
+    result = autotune(df, horizon=20, models=("sarimax",), model_params=current)
+    assert result["sarimax"]["order"] == [3, 1, 0]
+    assert result["sarimax"]["seasonal_order"] == [0, 1, 3, 7]
+    assert result["sarimax"]["mae_after"] == result["sarimax"]["mae_before"]
+
+
+def test_autotune_returns_better_or_equal_prophet_params():
+    df = _synthetic_series(n_days=150)
+    result = autotune(df, horizon=20, models=("prophet",))
+    assert "prophet" in result
+    assert "sarimax" not in result
+    assert result["prophet"]["seasonality_mode"] in {"additive", "multiplicative"}
+    assert result["prophet"]["mae_after"] <= result["prophet"]["mae_before"]
+
+
+def test_autotune_keeps_configured_seasonal_period():
+    df = _synthetic_series(n_days=150)
+    result = autotune(df, horizon=20, models=("sarimax",), model_params={"sarimax": {"seasonal_order": [1, 1, 1, 14]}})
+    assert result["sarimax"]["seasonal_order"][3] == 14
 
 
 def _synthetic_series_with_extra(n_days: int = 60) -> pd.DataFrame:

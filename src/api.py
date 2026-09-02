@@ -250,6 +250,169 @@ def backtest(
     }
 
 
+def _mae(prevision: list[float], actual: np.ndarray) -> float:
+    return float(np.abs(np.asarray(prevision) - actual).mean())
+
+
+# d et D quasi toujours égaux à 1 en pratique (une seule différenciation de
+# tendance/saisonnalité suffit presque toujours pour une activité journalière)
+# : on les fixe pour concentrer la recherche sur p/q/P/Q, là où se jouent les
+# vraies interactions. Descente par coordonnées plutôt qu'un grid search : à
+# chaque étape on ne fait varier qu'un seul paramètre (les autres restent au
+# meilleur trouvé jusque-là), sur 2 passes pour rattraper une partie des
+# interactions entre paramètres — sans retester tout le produit cartésien.
+_SARIMAX_D = 1
+_SARIMAX_BIG_D = 1
+_SARIMAX_PARAM_RANGE = (0, 1, 2)
+
+
+def _sarimax_coordinate_search(
+    train: pd.DataFrame,
+    horizon: int,
+    exog_hist: pd.DataFrame | None,
+    exog_future: pd.DataFrame | None,
+    actual: np.ndarray,
+    s: int,
+    passes: int = 2,
+) -> tuple[dict, float]:
+    best = {"p": 1, "q": 1, "P": 1, "Q": 1}
+
+    def score(params: dict) -> float | None:
+        order = (params["p"], _SARIMAX_D, params["q"])
+        seasonal_order = (params["P"], _SARIMAX_BIG_D, params["Q"], s)
+        try:
+            prevision = forecast_sarimax(
+                train, horizon, exog_hist=exog_hist, exog_future=exog_future, order=order, seasonal_order=seasonal_order
+            )["prevision"]
+        except Exception:
+            return None
+        return _mae(prevision, actual)
+
+    best_mae = score(best)
+    if best_mae is None:
+        best_mae = float("inf")
+
+    for _ in range(passes):
+        improved = False
+        for axis in ("p", "q", "P", "Q"):
+            for value in _SARIMAX_PARAM_RANGE:
+                if value == best[axis]:
+                    continue
+                candidate = {**best, axis: value}
+                mae = score(candidate)
+                if mae is not None and mae < best_mae:
+                    best, best_mae = candidate, mae
+                    improved = True
+        if not improved:
+            break  # aucune amélioration sur la passe précédente : converge, pas la peine de continuer
+
+    order = [best["p"], _SARIMAX_D, best["q"]]
+    seasonal_order = [best["P"], _SARIMAX_BIG_D, best["Q"], s]
+    return {"order": order, "seasonal_order": seasonal_order}, best_mae
+
+
+# Grille curatée (pas un produit cartésien complet) : l'optimisation tourne en
+# synchrone au clic d'un bouton, elle doit rester de l'ordre de la minute.
+_PROPHET_CANDIDATES = [
+    (0.05, 10, "additive"),
+    (0.01, 10, "additive"),
+    (0.1, 10, "additive"),
+    (0.3, 10, "additive"),
+    (0.05, 1, "additive"),
+    (0.05, 25, "additive"),
+    (0.05, 10, "multiplicative"),
+    (0.1, 25, "multiplicative"),
+    (0.01, 1, "additive"),
+    (0.3, 25, "multiplicative"),
+]
+
+
+def autotune(
+    df: pd.DataFrame,
+    horizon: int,
+    exog_hist: pd.DataFrame | None = None,
+    exog_future: pd.DataFrame | None = None,
+    unit_label: str = "unités",
+    models: tuple[str, ...] = ("sarimax", "prophet"),
+    model_params: dict[str, dict] | None = None,
+) -> dict:
+    """Cherche, pour chaque modèle demandé, les hyperparamètres qui minimisent
+    l'erreur sur les derniers `horizon` jours déjà connus (même découpage
+    train/test que `backtest`) — évite le réglage manuel des paramètres avancés.
+    """
+    if len(df) < MIN_BACKTEST_TRAIN_DAYS + horizon:
+        raise HTTPException(
+            400,
+            f"Historique trop court pour optimiser (minimum {MIN_BACKTEST_TRAIN_DAYS + horizon} jours, "
+            f"{len(df)} disponibles)",
+        )
+
+    train, test = df.iloc[:-horizon], df.iloc[-horizon:]
+    actual = test["visitors"].to_numpy()
+    model_params = model_params or {}
+
+    result = {"unit_label": unit_label}
+
+    if "sarimax" in models:
+        current = model_params.get("sarimax") or {"order": [1, 1, 1], "seasonal_order": [1, 1, 1, 7]}
+        s = int(current.get("seasonal_order", [1, 1, 1, 7])[3])
+        mae_before = _mae(
+            forecast(train, horizon, exog_hist=exog_hist, exog_future=exog_future, model="sarimax", model_params=current)["prevision"],
+            actual,
+        )
+        found, found_mae = _sarimax_coordinate_search(train, horizon, exog_hist, exog_future, actual, s)
+        # la recherche part toujours de p=q=P=Q=1 : si la config déjà en place
+        # (potentiellement différente) fait mieux que tout ce qu'elle a trouvé,
+        # on la garde plutôt que de régresser silencieusement.
+        if found_mae <= mae_before:
+            best_order, best_seasonal, best_mae = found["order"], found["seasonal_order"], found_mae
+        else:
+            best_order, best_seasonal, best_mae = list(current["order"]), list(current["seasonal_order"]), mae_before
+        result["sarimax"] = {
+            "order": best_order,
+            "seasonal_order": best_seasonal,
+            "mae_before": round(mae_before, 2),
+            "mae_after": round(best_mae, 2),
+        }
+
+    if "prophet" in models:
+        current = model_params.get("prophet") or {}
+        mae_before = _mae(
+            forecast(train, horizon, exog_hist=exog_hist, exog_future=exog_future, model="prophet", model_params=current)["prevision"],
+            actual,
+        )
+        best = None
+        for cps, sps, mode in _PROPHET_CANDIDATES:
+            try:
+                prevision = forecast_prophet(
+                    train, horizon, exog_hist=exog_hist, exog_future=exog_future,
+                    changepoint_prior_scale=cps, seasonality_prior_scale=sps, seasonality_mode=mode,
+                )["prevision"]
+            except Exception:
+                continue
+            mae = _mae(prevision, actual)
+            if best is None or mae < best["mae"]:
+                best = {"changepoint_prior_scale": cps, "seasonality_prior_scale": sps, "seasonality_mode": mode, "mae": mae}
+        # même garde-fou que pour SARIMAX : ne jamais remplacer une config déjà
+        # meilleure que tous les candidats testés.
+        if best is None or best["mae"] > mae_before:
+            best = {
+                "changepoint_prior_scale": current.get("changepoint_prior_scale", 0.05),
+                "seasonality_prior_scale": current.get("seasonality_prior_scale", 10.0),
+                "seasonality_mode": current.get("seasonality_mode", "additive"),
+                "mae": mae_before,
+            }
+        result["prophet"] = {
+            "changepoint_prior_scale": best["changepoint_prior_scale"],
+            "seasonality_prior_scale": best["seasonality_prior_scale"],
+            "seasonality_mode": best["seasonality_mode"],
+            "mae_before": round(mae_before, 2),
+            "mae_after": round(best["mae"], 2),
+        }
+
+    return result
+
+
 def _read_csv_flexible(content: bytes) -> pd.DataFrame:
     """Essaie d'abord la virgule (moteur C, rapide même sur un gros fichier) ;
     ne bascule vers la détection automatique du séparateur (moteur Python,
@@ -593,6 +756,16 @@ def api_store_backtest(store_id: str, horizon: int = Query(28, ge=7, le=90), mod
     )
 
 
+@app.get("/api/stores/{store_id}/autotune")
+def api_store_autotune(store_id: str, horizon: int = Query(28, ge=7, le=90), model_params: str | None = Query(None)):
+    df = load_series(store_id)
+    exog = df[["holiday_flg"]]
+    return autotune(
+        df, horizon, exog_hist=exog.iloc[:-horizon], exog_future=exog.iloc[-horizon:], unit_label="couverts",
+        model_params=parse_model_params(model_params),
+    )
+
+
 @app.post("/api/upload/store-ids")
 async def api_upload_store_ids(file: UploadFile = File(...), store_col: str = Form(...)):
     raw = _read_csv_flexible(await file.read())
@@ -782,6 +955,46 @@ async def api_upload_backtest(
         df, horizon, location, use_ferie, use_vacances, use_meteo, extra_cols, external_exog
     )
     return backtest(
+        df, horizon, exog_hist=exog_hist, exog_future=exog_future, model_params=parse_model_params(model_params)
+    )
+
+
+@app.post("/api/upload/autotune")
+async def api_upload_autotune(
+    file: UploadFile = File(...),
+    date_col: str = Form(...),
+    value_col: str = Form(...),
+    horizon: int = Form(28),
+    model_params: str | None = Form(None),
+    store_col: str | None = Form(None),
+    store_value: str | None = Form(None),
+    category_col: str | None = Form(None),
+    category_value: str | None = Form(None),
+    extra_exog_cols: str | None = Form(None),
+    exog_file: UploadFile | None = File(None),
+    exog_date_col: str | None = Form(None),
+    exog_value_cols: str | None = Form(None),
+    exog_store_col: str | None = Form(None),
+    exog_category_col: str | None = Form(None),
+    location: str | None = Form(None),
+    use_ferie: bool = Form(True),
+    use_vacances: bool = Form(True),
+    use_meteo: bool = Form(True),
+):
+    extra_cols = parse_form_list(extra_exog_cols)
+    df = parse_csv(
+        await file.read(), date_col, value_col, store_col, store_value, category_col, category_value, extra_cols
+    )
+    external_exog = await load_external_exog(exog_file, exog_date_col, exog_value_cols, exog_store_col, exog_category_col)
+    if external_exog is not None and (exog_store_col or exog_category_col):
+        external_exog = external_exog_for_entity(
+            external_exog, exog_date_col, parse_form_list(exog_value_cols),
+            exog_store_col, store_value, exog_category_col, category_value,
+        )
+    exog_hist, exog_future = backtest_exog(
+        df, horizon, location, use_ferie, use_vacances, use_meteo, extra_cols, external_exog
+    )
+    return autotune(
         df, horizon, exog_hist=exog_hist, exog_future=exog_future, model_params=parse_model_params(model_params)
     )
 
@@ -1210,6 +1423,18 @@ def api_point_backtest(point_id: int, horizon: int = Query(28, ge=7, le=90), mod
         point["df"], horizon, point["location"], point["use_ferie"], point["use_vacances"], point["use_meteo"]
     )
     return backtest(
+        point["df"], horizon, exog_hist=exog_hist, exog_future=exog_future,
+        model_params=parse_model_params(model_params),
+    )
+
+
+@app.get("/api/points/{point_id}/autotune")
+def api_point_autotune(point_id: int, horizon: int = Query(28, ge=7, le=90), model_params: str | None = Query(None)):
+    point = load_point_or_404(point_id)
+    exog_hist, exog_future = backtest_exog(
+        point["df"], horizon, point["location"], point["use_ferie"], point["use_vacances"], point["use_meteo"]
+    )
+    return autotune(
         point["df"], horizon, exog_hist=exog_hist, exog_future=exog_future,
         model_params=parse_model_params(model_params),
     )

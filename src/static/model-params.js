@@ -4,6 +4,14 @@
 
 const el = (id) => document.getElementById(id);
 
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 // Mêmes valeurs par défaut que le backend (src/api.py forecast_sarimax/
 // forecast_prophet, src/lightgbm_forecast.py LGB_PARAMS/NUM_BOOST_ROUND) —
 // à garder synchronisées si ces défauts changent côté Python.
@@ -53,6 +61,78 @@ function loadModelParams() {
 
 function saveModelParams(params) {
   localStorage.setItem("cadence-model-params", JSON.stringify(params));
+}
+
+// Configurations nommées sauvegardées par l'utilisateur (indépendantes des
+// valeurs actives ci-dessus) — un tableau de {id, name, params} par modèle.
+const PRESETS_STORAGE_KEY = "cadence-model-presets";
+
+function loadPresets() {
+  let saved = {};
+  try {
+    saved = JSON.parse(localStorage.getItem(PRESETS_STORAGE_KEY) || "{}");
+  } catch {
+    saved = {};
+  }
+  return {
+    sarimax: Array.isArray(saved.sarimax) ? saved.sarimax : [],
+    prophet: Array.isArray(saved.prophet) ? saved.prophet : [],
+    lightgbm: Array.isArray(saved.lightgbm) ? saved.lightgbm : [],
+  };
+}
+
+function savePresets(presets) {
+  localStorage.setItem(PRESETS_STORAGE_KEY, JSON.stringify(presets));
+}
+
+function addPreset(modelName, name, params) {
+  const presets = loadPresets();
+  presets[modelName].push({ id: crypto.randomUUID(), name, params });
+  savePresets(presets);
+  return presets;
+}
+
+function renamePreset(modelName, id, name) {
+  const presets = loadPresets();
+  const preset = presets[modelName].find((p) => p.id === id);
+  if (preset) preset.name = name;
+  savePresets(presets);
+  return presets;
+}
+
+function deletePreset(modelName, id) {
+  const presets = loadPresets();
+  presets[modelName] = presets[modelName].filter((p) => p.id !== id);
+  savePresets(presets);
+  return presets;
+}
+
+// Pré-installe une configuration "Défaut Cadence" par modèle au tout premier
+// chargement (rien à faire pour avoir un point de départ dans les menus de
+// l'étape 4 / génération en masse) — ne revient jamais une fois ce premier
+// chargement passé, y compris si l'utilisateur supprime ensuite ce préréglage.
+function ensureDefaultPresets() {
+  if (localStorage.getItem("cadence-model-presets-seeded")) return;
+  const presets = loadPresets();
+  for (const modelName of Object.keys(DEFAULT_MODEL_PARAMS)) {
+    if (presets[modelName].length === 0) {
+      presets[modelName].push({ id: crypto.randomUUID(), name: "Défaut Cadence", params: { ...DEFAULT_MODEL_PARAMS[modelName] } });
+    }
+  }
+  savePresets(presets);
+  localStorage.setItem("cadence-model-presets-seeded", "true");
+}
+ensureDefaultPresets();
+
+// <option> d'un menu de sélection de configuration pour `modelName` — utilisé
+// à l'étape 4 et dans la génération en masse pour appliquer un préréglage
+// sans passer par la page Modèles.
+function presetSelectOptionsHtml(modelName) {
+  const options = [`<option value="">Réglages actuels</option>`];
+  for (const preset of loadPresets()[modelName]) {
+    options.push(`<option value="${preset.id}">${escapeHtml(preset.name)}</option>`);
+  }
+  return options.join("");
 }
 
 function populateModelParamsInputs(params) {

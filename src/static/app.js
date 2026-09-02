@@ -265,7 +265,10 @@ function renderLineChart(canvasId, labels, datasets) {
   if (charts[canvasId]) charts[canvasId].destroy();
   const text = cssVar("--muted");
   const grid = cssVar("--chart-grid");
-  charts[canvasId] = new Chart(el(canvasId), {
+  const canvas = el(canvasId);
+  const legend = renderChartLegend(canvasId, canvas, datasets);
+
+  charts[canvasId] = new Chart(canvas, {
     type: "line",
     data: { labels, datasets },
     options: {
@@ -273,10 +276,7 @@ function renderLineChart(canvasId, labels, datasets) {
       animation: false,
       interaction: { mode: "index", intersect: false },
       plugins: {
-        legend: {
-          display: datasets.length > 1,
-          labels: { color: text, usePointStyle: true, pointStyle: "line" },
-        },
+        legend: { display: false },
       },
       scales: {
         x: { ticks: { maxTicksLimit: 10, color: text }, grid: { color: grid } },
@@ -284,6 +284,43 @@ function renderLineChart(canvasId, labels, datasets) {
       },
     },
   });
+
+  if (legend) {
+    legend.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+      cb.addEventListener("change", () => {
+        charts[canvasId].setDatasetVisibility(Number(cb.dataset.index), cb.checked);
+        charts[canvasId].update();
+      });
+    });
+  }
+}
+
+// Case à cocher par série au-dessus du graphe, à la place de la légende Chart.js
+// cliquable mais peu visible (on veut que "case cochée = série affichée" soit explicite).
+function renderChartLegend(canvasId, canvas, datasets) {
+  let legend = document.getElementById(`${canvasId}-legend`);
+  if (datasets.length <= 1) {
+    if (legend) legend.hidden = true;
+    return null;
+  }
+  if (!legend) {
+    legend = document.createElement("div");
+    legend.id = `${canvasId}-legend`;
+    legend.className = "chart-legend";
+    canvas.parentNode.insertBefore(legend, canvas);
+  }
+  legend.hidden = false;
+  legend.innerHTML = datasets
+    .map(
+      (ds, i) => `
+        <label class="chart-legend-item">
+          <input type="checkbox" checked data-index="${i}" style="--cb-color: ${ds.borderColor}" />
+          <span class="chart-legend-swatch" style="background:${ds.borderColor}"></span>
+          ${ds.label}
+        </label>`
+    )
+    .join("");
+  return legend;
 }
 
 function simpleDataset(label, data, color) {
@@ -471,14 +508,6 @@ async function fetchCitySuggestions(query) {
   } catch {
     list.hidden = true;
   }
-}
-
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
 }
 
 function stripQuotes(field) {
@@ -772,6 +801,37 @@ async function fetchBacktest(source, horizon) {
   return res.json();
 }
 
+async function fetchAutotune(source, horizon) {
+  const modelParams = encodeURIComponent(JSON.stringify(modelParamsPayload()));
+  if (source.type === "store") {
+    const res = await fetch(`/api/stores/${source.storeId}/autotune?horizon=${horizon}&model_params=${modelParams}`);
+    if (!res.ok) throw new Error((await res.json()).detail || "Erreur d'optimisation");
+    return res.json();
+  }
+  if (source.type === "point") {
+    const res = await fetch(`/api/points/${source.pointId}/autotune?horizon=${horizon}&model_params=${modelParams}`);
+    if (!res.ok) throw new Error((await res.json()).detail || "Erreur d'optimisation");
+    return res.json();
+  }
+  const form = new FormData();
+  form.append("file", source.file);
+  form.append("date_col", source.dateCol);
+  form.append("value_col", source.valueCol);
+  form.append("horizon", horizon);
+  form.append("model_params", JSON.stringify(modelParamsPayload()));
+  appendStoreFields(form, source);
+  appendExogFileFields(form, source);
+  if (source.location) {
+    form.append("location", source.location);
+    form.append("use_ferie", source.useFerie);
+    form.append("use_vacances", source.useVacances);
+    form.append("use_meteo", source.useMeteo);
+  }
+  const res = await fetch("/api/upload/autotune", { method: "POST", body: form });
+  if (!res.ok) throw new Error((await res.json()).detail || "Erreur d'optimisation");
+  return res.json();
+}
+
 function renderAnalysis(data) {
   lastAnalysisData = data;
   el("results").hidden = false;
@@ -815,13 +875,20 @@ function renderAnalysis(data) {
   tbody.innerHTML = data.anomalies.length
     ? data.anomalies.map((a) => `<tr><td>${a.date}</td><td>${a.resid > 0 ? "+" : ""}${a.resid}</td></tr>`).join("")
     : `<tr><td colspan="2" class="hint">Aucune rupture détectée</td></tr>`;
-  // reste replié tant qu'on n'a pas cliqué sur le compteur "Ruptures détectées" —
-  // discret par défaut, une nouvelle analyse ne doit pas le rouvrir tout seul
+  // reste replié tant qu'on n'a pas cliqué sur l'onglet "Ruptures de rythme" —
+  // fermé par défaut, une nouvelle analyse ne doit pas le rouvrir tout seul
   el("anomalies-section").hidden = true;
+  el("anomalies-tab").setAttribute("aria-expanded", "false");
+  el("anomalies-tab").querySelector(".collapsible-tab-icon").textContent = "▸";
 }
 
 function toggleAnomaliesSection() {
-  el("anomalies-section").hidden = !el("anomalies-section").hidden;
+  const section = el("anomalies-section");
+  const tab = el("anomalies-tab");
+  const expanded = section.hidden; // sera l'état après bascule
+  section.hidden = !expanded;
+  tab.setAttribute("aria-expanded", String(expanded));
+  tab.querySelector(".collapsible-tab-icon").textContent = expanded ? "▾" : "▸";
 }
 
 function renderForecast(data, model) {
@@ -962,6 +1029,83 @@ async function onBacktest() {
     const data = await fetchBacktest(currentSource, horizon);
     renderBacktest(data);
     status.textContent = "";
+  } catch (err) {
+    status.textContent = err.message;
+  }
+}
+
+// Applique une configuration enregistrée (page Modèles) comme réglages actifs
+// pour ce modèle — utilisé par les menus de configuration de l'étape 4 et de
+// la génération en masse, pour changer de préréglage sans quitter la page.
+function applyPresetToActive(modelName, presetId) {
+  if (!presetId) return; // "Réglages actuels" : rien à changer
+  const preset = loadPresets()[modelName].find((p) => p.id === presetId);
+  if (!preset) return;
+  const current = loadModelParams();
+  current[modelName] = { ...preset.params };
+  saveModelParams(current);
+}
+
+function refreshPresetSelect(selectEl, modelName, selectedId) {
+  selectEl.innerHTML = presetSelectOptionsHtml(modelName);
+  if (selectedId) selectEl.value = selectedId;
+}
+
+function refreshBacktestConfigSelects() {
+  refreshPresetSelect(el("backtest-sarimax-config"), "sarimax");
+  refreshPresetSelect(el("backtest-prophet-config"), "prophet");
+}
+
+function refreshBulkConfigSelect() {
+  refreshPresetSelect(el("bulk-model-config"), el("bulk-model-select").value);
+}
+
+// Enregistre les réglages actuellement actifs pour ce modèle (ex. le résultat
+// d'"Optimiser les paramètres") comme configuration nommée, sans repasser par
+// la page Modèles — puis sélectionne la nouvelle entrée dans le menu.
+function onSaveActiveConfigAsPreset(modelName, selectEl) {
+  const name = (prompt("Nom de la configuration à enregistrer :") || "").trim();
+  if (!name) return;
+  addPreset(modelName, name, loadModelParams()[modelName]);
+  const newPreset = loadPresets()[modelName].at(-1);
+  refreshPresetSelect(selectEl, modelName, newPreset.id);
+}
+
+function applyAutotuneResult(data) {
+  const params = loadModelParams();
+  if (data.sarimax) {
+    const [p, d, q] = data.sarimax.order;
+    const [P, D, Q, s] = data.sarimax.seasonal_order;
+    params.sarimax = { p, d, q, P, D, Q, s };
+  }
+  if (data.prophet) {
+    params.prophet = {
+      interval_width: params.prophet.interval_width, // pas testé (n'affecte que la largeur de l'IC, pas l'erreur)
+      changepoint_prior_scale: data.prophet.changepoint_prior_scale,
+      seasonality_prior_scale: data.prophet.seasonality_prior_scale,
+      seasonality_mode: data.prophet.seasonality_mode,
+    };
+  }
+  saveModelParams(params);
+}
+
+async function onAutotune() {
+  const status = el("autotune-status");
+  const horizon = parseInt(el("horizon-input").value, 10);
+  try {
+    status.textContent = "Optimisation en cours (peut prendre une minute)...";
+    const data = await fetchAutotune(currentSource, horizon);
+    applyAutotuneResult(data);
+    // les réglages actifs ne correspondent plus forcément au préréglage
+    // affiché (s'il y en avait un de sélectionné) : revient à "Réglages actuels"
+    el("backtest-sarimax-config").value = "";
+    el("backtest-prophet-config").value = "";
+    const summary = ["sarimax", "prophet"]
+      .filter((name) => data[name])
+      .map((name) => `${MODEL_LABELS[name] || name} : MAE ${data[name].mae_before} → ${data[name].mae_after}`)
+      .join(" · ");
+    status.textContent = `Paramètres optimisés et enregistrés — ${summary}.`;
+    onBacktest(); // reflète immédiatement les nouveaux paramètres dans la comparaison
   } catch (err) {
     status.textContent = err.message;
   }
@@ -1185,18 +1329,30 @@ function init() {
     if (lastForecastData) renderForecast(lastForecastData, lastForecastModel);
   });
   el("backtest-btn").addEventListener("click", onBacktest);
-  el("anomalies-toggle").addEventListener("click", toggleAnomaliesSection);
-  el("anomalies-toggle").addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      toggleAnomaliesSection();
-    }
-  });
+  el("horizon-input").addEventListener("change", onBacktest);
+  el("autotune-btn").addEventListener("click", onAutotune);
+  el("anomalies-tab").addEventListener("click", toggleAnomaliesSection);
   el("save-point-btn").addEventListener("click", onSavePoint);
   el("bulk-forecast-btn").addEventListener("click", onBulkForecast);
   el("bulk-horizon-input").addEventListener("input", updateBulkRowCount);
   el("bulk-model-select").addEventListener("change", updateBulkCiAvailability);
   updateBulkCiAvailability();
+  refreshBacktestConfigSelects();
+  el("backtest-sarimax-config").addEventListener("change", (e) => {
+    applyPresetToActive("sarimax", e.target.value);
+    onBacktest();
+  });
+  el("backtest-prophet-config").addEventListener("change", (e) => {
+    applyPresetToActive("prophet", e.target.value);
+    onBacktest();
+  });
+  el("backtest-sarimax-save-btn").addEventListener("click", () => onSaveActiveConfigAsPreset("sarimax", el("backtest-sarimax-config")));
+  el("backtest-prophet-save-btn").addEventListener("click", () => onSaveActiveConfigAsPreset("prophet", el("backtest-prophet-config")));
+  refreshBulkConfigSelect();
+  el("bulk-model-select").addEventListener("change", refreshBulkConfigSelect);
+  el("bulk-model-config").addEventListener("change", (e) => {
+    applyPresetToActive(el("bulk-model-select").value, e.target.value);
+  });
   el("delete-point-btn").addEventListener("click", onDeletePoint);
   loadStores().then(updateAnalyzeButtonState);
   loadPoints();
