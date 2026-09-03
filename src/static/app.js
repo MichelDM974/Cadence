@@ -1309,20 +1309,12 @@ async function onDeletePoint() {
   await loadPoints();
 }
 
-function rerenderCharts() {
-  if (lastAnalysisData) renderAnalysis(lastAnalysisData);
-  if (lastForecastData) renderForecast(lastForecastData, lastForecastModel);
-  if (lastBacktestData) renderBacktest(lastBacktestData);
-}
-
-// setupThemeSwitch() et setupAccountMenu() (bascule clair/sombre/système,
-// menu "Mon compte") viennent de theme.js, partagé avec models.html.
+// setupAccountMenu() (menu "Mon compte") vient de menu.js, partagé avec
+// models.html.
 
 function init() {
   ensureDefaultPresets();
-  setupThemeSwitch();
   setupAccountMenu();
-  document.addEventListener("cadence:theme-changed", rerenderCharts);
   setupSourceToggle();
   setupFileInput();
   setupLocationInput();

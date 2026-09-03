@@ -1,56 +1,16 @@
 :root {
-  color-scheme: light;
-  --bg: #f7f7f5;
-  --panel: #ffffff;
-  --border: #e2e2df;
-  --text: #23231f;
-  --muted: #6b6b66;
-  --accent: #c05a2a;
-  --accent-soft: rgba(192, 90, 42, 0.12);
-  --accent-text: #ffffff;
-  --disabled-bg: #cfcfca;
-  --shadow: rgba(0, 0, 0, 0.08);
-  --chart-grid: rgba(35, 35, 31, 0.08);
-  --chart-band: rgba(192, 90, 42, 0.15);
-  --accent-2: #3d6f97;
-  --accent-3: #4a8f5c;
-  --danger: #b5432f;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    color-scheme: dark;
-    --bg: #171715;
-    --panel: #201f1c;
-    --border: #34332e;
-    --text: #ecebe6;
-    --muted: #9c9a92;
-    --accent: #e07b46;
-    --accent-soft: rgba(224, 123, 70, 0.16);
-    --accent-text: #171715;
-    --disabled-bg: #3a3934;
-    --shadow: rgba(0, 0, 0, 0.35);
-    --chart-grid: rgba(236, 235, 230, 0.1);
-    --chart-band: rgba(224, 123, 70, 0.2);
-    --accent-2: #7fb3dd;
-    --accent-3: #6fc78a;
-    --danger: #e0705c;
-  }
-}
-
-:root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #171715;
-  --panel: #201f1c;
-  --border: #34332e;
-  --text: #ecebe6;
-  --muted: #9c9a92;
+  --bg: #1d1c19;
+  --panel: #262521;
+  --border: #3d3b35;
+  --text: #f0efe9;
+  --muted: #a8a69d;
   --accent: #e07b46;
   --accent-soft: rgba(224, 123, 70, 0.16);
-  --accent-text: #171715;
-  --disabled-bg: #3a3934;
-  --shadow: rgba(0, 0, 0, 0.35);
-  --chart-grid: rgba(236, 235, 230, 0.1);
+  --accent-text: #1d1c19;
+  --disabled-bg: #46443d;
+  --shadow: rgba(0, 0, 0, 0.4);
+  --chart-grid: rgba(240, 239, 233, 0.12);
   --chart-band: rgba(224, 123, 70, 0.2);
   --accent-2: #7fb3dd;
   --accent-3: #6fc78a;
@@ -89,34 +49,6 @@ header {
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
-}
-
-.theme-switch {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-}
-
-.theme-dot {
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border-radius: 50%;
-  border: 2px solid var(--border);
-  background: var(--panel);
-  flex-shrink: 0;
-}
-
-.theme-dot[data-theme-value="light"] { background: #ffffff; }
-.theme-dot[data-theme-value="dark"] { background: #1c1c1a; }
-.theme-dot[data-theme-value="system"] {
-  background: linear-gradient(135deg, #ffffff 50%, #1c1c1a 50%);
-}
-
-.theme-dot.active {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .account-menu {
@@ -177,30 +109,27 @@ header {
   color: var(--accent);
 }
 
-.account-dropdown-item-wrap {
-  width: 100%;
-}
-
-/* index.html : cliquer sur "Thème" remplace le libellé, dans la même ligne,
-   par les 3 ronds clair/sombre/système — pas de popup séparé. */
-.account-dropdown-item-wrap .theme-switch {
-  padding: 9px 12px;
-}
-
-.appearance-popup {
+.settings-popup {
   position: absolute;
   z-index: 20;
+  min-width: 180px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: 0 6px 14px var(--shadow);
-  padding: 10px;
+  padding: 10px 12px;
 }
 
 /* models.html : pas de menu déroulant, le popup pend directement sous ⚙. */
-.account-menu > .appearance-popup {
+.account-menu > .settings-popup {
   top: calc(100% + 8px);
   right: 0;
+}
+
+.settings-empty {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 0;
 }
 
 .back-btn {

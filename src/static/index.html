@@ -4,14 +4,6 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Cadence</title>
-  <script>
-    (function () {
-      var saved = localStorage.getItem("cadence-theme");
-      if (saved === "light" || saved === "dark") {
-        document.documentElement.dataset.theme = saved;
-      }
-    })();
-  </script>
   <link rel="stylesheet" href="style.css" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
 </head>
@@ -25,14 +17,6 @@
       <div class="account-menu">
         <button type="button" id="account-menu-btn" title="Paramètres" aria-label="Paramètres">⚙</button>
         <div id="account-dropdown" class="account-dropdown" hidden>
-          <div class="account-dropdown-item-wrap">
-            <button type="button" id="account-appearance-btn" class="account-dropdown-item">Thème</button>
-            <div class="theme-switch" id="theme-switch" hidden>
-              <button type="button" class="theme-dot" data-theme-value="light" title="Clair" aria-label="Clair"></button>
-              <button type="button" class="theme-dot" data-theme-value="dark" title="Sombre" aria-label="Sombre"></button>
-              <button type="button" class="theme-dot" data-theme-value="system" title="Système" aria-label="Système"></button>
-            </div>
-          </div>
           <a href="models.html" class="account-dropdown-item">Modèles</a>
         </div>
       </div>
@@ -301,7 +285,7 @@
   </main>
 
   <script src="model-params.js"></script>
-  <script src="theme.js"></script>
+  <script src="menu.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

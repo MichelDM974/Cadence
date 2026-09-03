@@ -4,14 +4,6 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Cadence — Modèles</title>
-  <script>
-    (function () {
-      var saved = localStorage.getItem("cadence-theme");
-      if (saved === "light" || saved === "dark") {
-        document.documentElement.dataset.theme = saved;
-      }
-    })();
-  </script>
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
@@ -25,13 +17,9 @@
     <div class="header-actions">
       <a href="index.html" class="back-btn">← Retour à l'analyse</a>
       <div class="account-menu">
-        <button type="button" id="account-menu-btn" title="Thème" aria-label="Changer le thème">⚙</button>
-        <div id="appearance-popup" class="appearance-popup" hidden>
-          <div class="theme-switch" id="theme-switch">
-            <button type="button" class="theme-dot" data-theme-value="light" title="Clair" aria-label="Clair"></button>
-            <button type="button" class="theme-dot" data-theme-value="dark" title="Sombre" aria-label="Sombre"></button>
-            <button type="button" class="theme-dot" data-theme-value="system" title="Système" aria-label="Système"></button>
-          </div>
+        <button type="button" id="account-menu-btn" title="Paramètres" aria-label="Paramètres">⚙</button>
+        <div id="settings-popup" class="settings-popup" hidden>
+          <p class="settings-empty">Aucun réglage pour l'instant.</p>
         </div>
       </div>
     </div>
@@ -237,7 +225,7 @@
   </main>
 
   <script src="model-params.js"></script>
-  <script src="theme.js"></script>
+  <script src="menu.js"></script>
   <script src="models.js"></script>
 </body>
 </html>

@@ -150,8 +150,7 @@ function setupFormulaRendering() {
 }
 
 ensureDefaultPresets();
-setupThemeSwitch();
-setupThemeOnlyMenu();
+setupSettingsMenu();
 setupModelParamsForm();
 setupPresetManagers();
 setupCollapsibleTabs();
