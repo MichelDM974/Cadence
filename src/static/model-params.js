@@ -17,7 +17,7 @@ function escapeHtml(str) {
 // à garder synchronisées si ces défauts changent côté Python.
 const DEFAULT_MODEL_PARAMS = {
   sarimax: { p: 1, d: 1, q: 1, P: 1, D: 1, Q: 1, s: 7 },
-  prophet: { interval_width: 0.8, changepoint_prior_scale: 0.05, seasonality_prior_scale: 10, seasonality_mode: "additive" },
+  prophet: { interval_width: 0.8, changepoint_prior_scale: 0.05, seasonality_prior_scale: 10, seasonality_mode: "multiplicative" },
   lightgbm: { learning_rate: 0.05, num_leaves: 63, min_data_in_leaf: 50, num_boost_round: 300 },
 };
 

@@ -143,7 +143,11 @@ def forecast_prophet(
     interval_width: float = 0.8,
     changepoint_prior_scale: float = 0.05,
     seasonality_prior_scale: float = 10.0,
-    seasonality_mode: str = "additive",
+    # multiplicative plutôt qu'additive (défaut brut de la bibliothèque
+    # Prophet) : plus adapté à des données de type retail/activité, où
+    # l'amplitude saisonnière (pic du week-end, etc.) grandit avec le niveau
+    # général de l'activité plutôt que de rester fixe en valeur absolue.
+    seasonality_mode: str = "multiplicative",
 ) -> dict:
     columns = list(exog_hist.columns) if exog_hist is not None else []
 
@@ -406,7 +410,7 @@ def autotune(
         # config actuelle déjà évaluée ci-dessus (cas courant : aucune config sauvegardée).
         current_cps = current.get("changepoint_prior_scale", 0.05)
         current_sps = current.get("seasonality_prior_scale", 10.0)
-        current_mode = current.get("seasonality_mode", "additive")
+        current_mode = current.get("seasonality_mode", "multiplicative")
         best = (
             {"changepoint_prior_scale": current_cps, "seasonality_prior_scale": current_sps, "seasonality_mode": current_mode, "mae": mae_before}
             if mae_before is not None
@@ -432,7 +436,7 @@ def autotune(
             best = {
                 "changepoint_prior_scale": current.get("changepoint_prior_scale", 0.05),
                 "seasonality_prior_scale": current.get("seasonality_prior_scale", 10.0),
-                "seasonality_mode": current.get("seasonality_mode", "additive"),
+                "seasonality_mode": current.get("seasonality_mode", "multiplicative"),
                 "mae": mae_before,
             }
         result["prophet"] = {
