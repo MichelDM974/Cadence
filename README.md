@@ -50,7 +50,7 @@ Et sur *Store Sales - Time Series Forecasting* (54 magasins × 33 catégories, 1
 | Prophet + `onpromotion` (jointure par entité) | 0.51275 |
 | LightGBM + `onpromotion` (jointure par entité, génération en masse) | 0.55166 |
 
-\* meilleur score obtenu à ce jour, pas encore la configuration utilisée par l'app (banc d'essai indépendant, cf. `src/forecast_submission_lightgbm_store_sales.py`).
+\* meilleur score obtenu à ce jour (banc d'essai indépendant, cf. `src/forecast_submission_lightgbm_store_sales.py`). L'objectif tweedie qui explique l'essentiel du gain est repris dans l'app depuis le 2026-09-03 ; le reste (lags étendus, tendance annuelle, régularisation) ne l'est pas encore.
 
 (0.501 et 0.37294 respectivement en tête des leaderboards Kaggle, pour référence.) SARIMAX bat par ailleurs une baseline naïve ("même jour la semaine dernière") sur 91% des restaurants testés (amélioration médiane +28,4% sur le MAE).
 
