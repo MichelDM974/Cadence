@@ -2,10 +2,10 @@
 (restaurant, jour), sur l'horizon officiel de test de la compétition
 (2017-04-23 -> 2017-05-31), pour les 821 restaurants concernés.
 
-Contrairement au prototype d'évaluation (forecast_prototype.py /
-forecast_batch.py), il n'y a pas de valeur réelle à comparer ici : Kaggle
-garde les réponses secrètes. Le modèle est donc entraîné sur tout
-l'historique disponible par restaurant, sans découpage train/test.
+Contrairement à une évaluation classique (voir baseline_comparison.py), il
+n'y a pas de valeur réelle à comparer ici : Kaggle garde les réponses
+secrètes. Le modèle est donc entraîné sur tout l'historique disponible par
+restaurant, sans découpage train/test.
 
 Chaque restaurant est indépendant des autres : le fit est distribué sur un
 pool de processus (un par cœur) plutôt que traité séquentiellement.
