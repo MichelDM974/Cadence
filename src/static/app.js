@@ -261,12 +261,21 @@ function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
+// Séries masquées par l'utilisateur via la légende, par canvas et par label —
+// survit à un rerender (ex. bascule de thème, qui redessine tous les graphes)
+// puisque `renderLineChart` reconstruit sans ça un Chart.js à zéro à chaque fois.
+const hiddenChartSeries = {};
+
 function renderLineChart(canvasId, labels, datasets) {
   if (charts[canvasId]) charts[canvasId].destroy();
   const text = cssVar("--muted");
   const grid = cssVar("--chart-grid");
   const canvas = el(canvasId);
-  const legend = renderChartLegend(canvasId, canvas, datasets);
+  const hidden = hiddenChartSeries[canvasId] || new Set();
+  datasets.forEach((ds) => {
+    if (hidden.has(ds.label)) ds.hidden = true;
+  });
+  const legend = renderChartLegend(canvasId, canvas, datasets, hidden);
 
   charts[canvasId] = new Chart(canvas, {
     type: "line",
@@ -288,8 +297,13 @@ function renderLineChart(canvasId, labels, datasets) {
   if (legend) {
     legend.querySelectorAll("input[type=checkbox]").forEach((cb) => {
       cb.addEventListener("change", () => {
-        charts[canvasId].setDatasetVisibility(Number(cb.dataset.index), cb.checked);
+        const index = Number(cb.dataset.index);
+        charts[canvasId].setDatasetVisibility(index, cb.checked);
         charts[canvasId].update();
+        const set = hiddenChartSeries[canvasId] || (hiddenChartSeries[canvasId] = new Set());
+        const label = datasets[index].label;
+        if (cb.checked) set.delete(label);
+        else set.add(label);
       });
     });
   }
@@ -297,9 +311,13 @@ function renderLineChart(canvasId, labels, datasets) {
 
 // Case à cocher par série au-dessus du graphe, à la place de la légende Chart.js
 // cliquable mais peu visible (on veut que "case cochée = série affichée" soit explicite).
-function renderChartLegend(canvasId, canvas, datasets) {
+function renderChartLegend(canvasId, canvas, datasets, hidden = new Set()) {
   let legend = document.getElementById(`${canvasId}-legend`);
-  if (datasets.length <= 1) {
+  // les séries marquées legendHidden (ex. IC haut/bas) forment une bande liée par
+  // fill:"-1" à l'index précédent : les masquer indépendamment casserait le rendu,
+  // donc elles restent affichées sans case à cocher dédiée.
+  const items = datasets.map((ds, i) => ({ ds, i })).filter(({ ds }) => !ds.legendHidden);
+  if (items.length <= 1) {
     if (legend) legend.hidden = true;
     return null;
   }
@@ -310,13 +328,13 @@ function renderChartLegend(canvasId, canvas, datasets) {
     canvas.parentNode.insertBefore(legend, canvas);
   }
   legend.hidden = false;
-  legend.innerHTML = datasets
+  legend.innerHTML = items
     .map(
-      (ds, i) => `
+      ({ ds, i }) => `
         <label class="chart-legend-item">
-          <input type="checkbox" checked data-index="${i}" style="--cb-color: ${ds.borderColor}" />
+          <input type="checkbox" ${hidden.has(ds.label) ? "" : "checked"} data-index="${i}" style="--cb-color: ${ds.borderColor}" />
           <span class="chart-legend-swatch" style="background:${ds.borderColor}"></span>
-          ${ds.label}
+          ${escapeHtml(ds.label)}
         </label>`
     )
     .join("");
@@ -882,24 +900,16 @@ function renderAnalysis(data) {
   el("anomalies-tab").querySelector(".collapsible-tab-icon").textContent = "▸";
 }
 
-function toggleAnomaliesSection() {
-  const section = el("anomalies-section");
-  const tab = el("anomalies-tab");
-  const expanded = section.hidden; // sera l'état après bascule
-  section.hidden = !expanded;
-  tab.setAttribute("aria-expanded", String(expanded));
-  tab.querySelector(".collapsible-tab-icon").textContent = expanded ? "▾" : "▸";
-}
-
 function renderForecast(data, model) {
   lastForecastData = data;
   const datasets = [];
   if (el("download-ci-toggle").checked) {
-    datasets.push({ ...simpleDataset("IC haut", data.ic_haut, "transparent"), fill: false });
+    datasets.push({ ...simpleDataset("IC haut", data.ic_haut, "transparent"), fill: false, legendHidden: true });
     datasets.push({
       ...simpleDataset("IC bas", data.ic_bas, "transparent"),
       fill: "-1",
       backgroundColor: cssVar("--chart-band"),
+      legendHidden: true,
     });
   }
   datasets.push(simpleDataset(`Prévision (${MODEL_LABELS[model] || model})`, data.prevision, cssVar("--accent")));
@@ -1062,13 +1072,65 @@ function refreshBulkConfigSelect() {
 
 // Enregistre les réglages actuellement actifs pour ce modèle (ex. le résultat
 // d'"Optimiser les paramètres") comme configuration nommée, sans repasser par
-// la page Modèles — puis sélectionne la nouvelle entrée dans le menu.
-function onSaveActiveConfigAsPreset(modelName, selectEl) {
-  const name = (prompt("Nom de la configuration à enregistrer :") || "").trim();
-  if (!name) return;
-  addPreset(modelName, name, loadModelParams()[modelName]);
-  const newPreset = loadPresets()[modelName].at(-1);
-  refreshPresetSelect(selectEl, modelName, newPreset.id);
+// la page Modèles. Le bouton "Enregistrer" se remplace en place par un petit
+// formulaire (nom + confirmer/annuler) plutôt que d'utiliser window.prompt(),
+// silencieusement bloqué dans certains contextes embarqués (webviews...).
+function setupSaveConfigGroups() {
+  document.querySelectorAll(".save-config-group").forEach((group) => {
+    const modelName = group.dataset.model;
+    const selectEl = el(`backtest-${modelName}-config`);
+    const openBtn = group.querySelector(".save-config-btn");
+    const form = group.querySelector(".save-config-form");
+    const input = group.querySelector(".save-config-name-input");
+    const status = el("save-config-status");
+
+    function closeForm() {
+      form.hidden = true;
+      openBtn.hidden = false;
+    }
+
+    function confirmSave() {
+      const name = input.value.trim();
+      if (!name) return;
+      const { created, preset } = addPreset(modelName, name, loadModelParams()[modelName]);
+      if (!created) {
+        status.textContent = "Cette configuration existe déjà.";
+        status.className = "status status--error";
+        return;
+      }
+      status.textContent = "";
+      status.className = "status";
+      refreshPresetSelect(selectEl, modelName, preset.id);
+      closeForm();
+    }
+
+    openBtn.addEventListener("click", () => {
+      openBtn.hidden = true;
+      form.hidden = false;
+      status.textContent = "";
+      input.value = "";
+      input.focus();
+    });
+
+    group.querySelector(".save-config-cancel-btn").addEventListener("click", () => {
+      status.textContent = "";
+      closeForm();
+    });
+
+    group.querySelector(".save-config-confirm-btn").addEventListener("click", confirmSave);
+
+    input.addEventListener("input", () => {
+      status.textContent = "";
+    });
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") confirmSave();
+      if (e.key === "Escape") {
+        status.textContent = "";
+        closeForm();
+      }
+    });
+  });
 }
 
 function applyAutotuneResult(data) {
@@ -1253,69 +1315,14 @@ function rerenderCharts() {
   if (lastBacktestData) renderBacktest(lastBacktestData);
 }
 
-function updateThemeButtons(value) {
-  document.querySelectorAll("#theme-switch button").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.themeValue === value);
-  });
-}
-
-function applyTheme(value) {
-  if (value === "system") {
-    delete document.documentElement.dataset.theme;
-    localStorage.removeItem("cadence-theme");
-  } else {
-    document.documentElement.dataset.theme = value;
-    localStorage.setItem("cadence-theme", value);
-  }
-  updateThemeButtons(value);
-  rerenderCharts();
-}
-
-function setupThemeSwitch() {
-  const saved = localStorage.getItem("cadence-theme") || "system";
-  updateThemeButtons(saved);
-
-  document.querySelectorAll("#theme-switch button").forEach((btn) => {
-    btn.addEventListener("click", () => applyTheme(btn.dataset.themeValue));
-  });
-
-  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-    if (!localStorage.getItem("cadence-theme")) rerenderCharts();
-  });
-}
-
-// Menu "Mon compte" : liste déroulante verticale (Apparence / Modèles).
-// "Apparence" ouvre un popup à côté du menu (thème) ; "Modèles" est un lien
-// vers une page séparée (models.html, cf. model-params.js/models.js).
-function setupAccountMenu() {
-  const dropdown = el("account-dropdown");
-  const appearancePopup = el("appearance-popup");
-
-  function closeAll() {
-    dropdown.hidden = true;
-    appearancePopup.hidden = true;
-  }
-
-  el("account-menu-btn").addEventListener("click", (e) => {
-    e.stopPropagation();
-    const wasHidden = dropdown.hidden;
-    closeAll();
-    dropdown.hidden = !wasHidden;
-  });
-
-  el("account-appearance-btn").addEventListener("click", (e) => {
-    e.stopPropagation();
-    appearancePopup.hidden = !appearancePopup.hidden;
-  });
-
-  document.addEventListener("click", (e) => {
-    if (!e.target.closest(".account-menu")) closeAll();
-  });
-}
+// setupThemeSwitch() et setupAccountMenu() (bascule clair/sombre/système,
+// menu "Mon compte") viennent de theme.js, partagé avec models.html.
 
 function init() {
+  ensureDefaultPresets();
   setupThemeSwitch();
   setupAccountMenu();
+  document.addEventListener("cadence:theme-changed", rerenderCharts);
   setupSourceToggle();
   setupFileInput();
   setupLocationInput();
@@ -1331,7 +1338,7 @@ function init() {
   el("backtest-btn").addEventListener("click", onBacktest);
   el("horizon-input").addEventListener("change", onBacktest);
   el("autotune-btn").addEventListener("click", onAutotune);
-  el("anomalies-tab").addEventListener("click", toggleAnomaliesSection);
+  setupCollapsibleTabs();
   el("save-point-btn").addEventListener("click", onSavePoint);
   el("bulk-forecast-btn").addEventListener("click", onBulkForecast);
   el("bulk-horizon-input").addEventListener("input", updateBulkRowCount);
@@ -1346,8 +1353,7 @@ function init() {
     applyPresetToActive("prophet", e.target.value);
     onBacktest();
   });
-  el("backtest-sarimax-save-btn").addEventListener("click", () => onSaveActiveConfigAsPreset("sarimax", el("backtest-sarimax-config")));
-  el("backtest-prophet-save-btn").addEventListener("click", () => onSaveActiveConfigAsPreset("prophet", el("backtest-prophet-config")));
+  setupSaveConfigGroups();
   refreshBulkConfigSelect();
   el("bulk-model-select").addEventListener("change", refreshBulkConfigSelect);
   el("bulk-model-config").addEventListener("change", (e) => {

@@ -35,8 +35,12 @@ function renderPresetList(modelName) {
           <span class="preset-name">${escapeHtml(preset.name)}</span>
           <span class="preset-actions">
             <button type="button" class="preset-apply-btn" title="Charger cette configuration">Charger</button>
-            <button type="button" class="preset-rename-btn" title="Renommer">✎</button>
-            <button type="button" class="preset-delete-btn" title="Supprimer">✕</button>
+            ${
+              isDefaultPreset(preset.id)
+                ? ""
+                : `<button type="button" class="preset-rename-btn" title="Renommer">✎</button>
+            <button type="button" class="preset-delete-btn" title="Supprimer">✕</button>`
+            }
           </span>
         </li>`
         )
@@ -49,11 +53,24 @@ function setupPresetManagers() {
     const modelName = manager.dataset.model;
     renderPresetList(modelName);
 
+    const input = manager.querySelector(".preset-name-input");
+    const status = manager.querySelector(".preset-save-status");
+
+    input.addEventListener("input", () => {
+      status.textContent = "";
+    });
+
     manager.querySelector(".preset-save-btn").addEventListener("click", () => {
-      const input = manager.querySelector(".preset-name-input");
       const name = input.value.trim();
       if (!name) return;
-      addPreset(modelName, name, loadModelParams()[modelName]);
+      const { created } = addPreset(modelName, name, loadModelParams()[modelName]);
+      if (!created) {
+        status.textContent = "Cette configuration existe déjà.";
+        status.className = "status preset-save-status status--error";
+        return;
+      }
+      status.textContent = "";
+      status.className = "status preset-save-status";
       input.value = "";
       renderPresetList(modelName);
     });
@@ -103,5 +120,40 @@ function setupPresetManagers() {
   });
 }
 
+// Petit bouton ⚙ sur l'encadré de formule : révèle le lexique des symboles,
+// masqué par défaut pour ne pas surcharger l'encadré.
+function setupFormulaLegendToggles() {
+  document.querySelectorAll(".model-formula-info-btn").forEach((btn) => {
+    const legend = document.getElementById(btn.getAttribute("aria-controls"));
+    btn.addEventListener("click", () => {
+      const expanded = legend.hidden; // état après bascule
+      legend.hidden = !expanded;
+      btn.setAttribute("aria-expanded", String(expanded));
+      btn.classList.toggle("active", expanded);
+    });
+  });
+}
+
+// Améliore les équations principales avec un vrai rendu LaTeX (KaTeX, chargé
+// en CDN dans models.html) quand la lib a pu charger. Le HTML de secours
+// (sub/sup) déjà présent dans la page reste affiché tel quel sinon — ex.
+// le navigateur intégré à VS Code bloque ce script CDN (comme window.prompt()).
+function setupFormulaRendering() {
+  if (typeof katex === "undefined") return;
+  document.querySelectorAll(".model-formula-eq[data-latex]").forEach((el) => {
+    try {
+      katex.render(el.dataset.latex, el, { displayMode: true, throwOnError: false });
+    } catch {
+      // le HTML de secours reste affiché
+    }
+  });
+}
+
+ensureDefaultPresets();
+setupThemeSwitch();
+setupThemeOnlyMenu();
 setupModelParamsForm();
 setupPresetManagers();
+setupCollapsibleTabs();
+setupFormulaLegendToggles();
+setupFormulaRendering();

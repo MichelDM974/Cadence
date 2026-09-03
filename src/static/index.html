@@ -17,21 +17,23 @@
 </head>
 <body>
   <header>
-    <div>
+    <div class="header-title">
       <h1>Cadence</h1>
-      <p>Prévision du rythme d'activité — décomposition, régularité, ruptures, prévision.</p>
+      <p class="tagline">Comprendre pour prévoir.</p>
     </div>
-    <div class="account-menu">
-      <button type="button" id="account-menu-btn" title="Paramètres" aria-label="Paramètres">⚙</button>
-      <div id="account-dropdown" class="account-dropdown" hidden>
-        <button type="button" id="account-appearance-btn" class="account-dropdown-item">Apparence</button>
-        <a href="models.html" class="account-dropdown-item">Modèles</a>
-      </div>
-      <div id="appearance-popup" class="appearance-popup" hidden>
-        <div class="theme-switch" id="theme-switch">
-          <button type="button" data-theme-value="light">Clair</button>
-          <button type="button" data-theme-value="dark">Sombre</button>
-          <button type="button" data-theme-value="system">Système</button>
+    <div class="header-actions">
+      <div class="account-menu">
+        <button type="button" id="account-menu-btn" title="Paramètres" aria-label="Paramètres">⚙</button>
+        <div id="account-dropdown" class="account-dropdown" hidden>
+          <div class="account-dropdown-item-wrap">
+            <button type="button" id="account-appearance-btn" class="account-dropdown-item">Thème</button>
+            <div class="theme-switch" id="theme-switch" hidden>
+              <button type="button" class="theme-dot" data-theme-value="light" title="Clair" aria-label="Clair"></button>
+              <button type="button" class="theme-dot" data-theme-value="dark" title="Sombre" aria-label="Sombre"></button>
+              <button type="button" class="theme-dot" data-theme-value="system" title="Système" aria-label="Système"></button>
+            </div>
+          </div>
+          <a href="models.html" class="account-dropdown-item">Modèles</a>
         </div>
       </div>
     </div>
@@ -247,13 +249,30 @@
         <button id="autotune-btn" type="button">Optimiser les paramètres</button>
       </div>
       <div class="forecast-controls">
-        <label for="backtest-sarimax-config">Config SARIMAX</label>
+        <label for="backtest-sarimax-config" class="config-row-label">Config SARIMAX</label>
         <select id="backtest-sarimax-config"></select>
-        <button type="button" id="backtest-sarimax-save-btn" class="save-config-btn" title="Enregistrer la configuration SARIMAX actuelle sous un nom">Enregistrer</button>
-        <label for="backtest-prophet-config">Config Prophet</label>
-        <select id="backtest-prophet-config"></select>
-        <button type="button" id="backtest-prophet-save-btn" class="save-config-btn" title="Enregistrer la configuration Prophet actuelle sous un nom">Enregistrer</button>
+        <span class="save-config-group" data-model="sarimax">
+          <button type="button" class="save-config-btn" title="Enregistrer la configuration SARIMAX actuelle sous un nom">Enregistrer</button>
+          <span class="save-config-form" hidden>
+            <input type="text" class="save-config-name-input" placeholder="Nom de la configuration" maxlength="60" />
+            <button type="button" class="save-config-confirm-btn" title="Confirmer">✓</button>
+            <button type="button" class="save-config-cancel-btn" title="Annuler">✕</button>
+          </span>
+        </span>
       </div>
+      <div class="forecast-controls">
+        <label for="backtest-prophet-config" class="config-row-label">Config Prophet</label>
+        <select id="backtest-prophet-config"></select>
+        <span class="save-config-group" data-model="prophet">
+          <button type="button" class="save-config-btn" title="Enregistrer la configuration Prophet actuelle sous un nom">Enregistrer</button>
+          <span class="save-config-form" hidden>
+            <input type="text" class="save-config-name-input" placeholder="Nom de la configuration" maxlength="60" />
+            <button type="button" class="save-config-confirm-btn" title="Confirmer">✓</button>
+            <button type="button" class="save-config-cancel-btn" title="Annuler">✕</button>
+          </span>
+        </span>
+      </div>
+      <p id="save-config-status" class="status"></p>
       <p id="autotune-status" class="status"></p>
       <div id="backtest-result" hidden>
         <p id="backtest-summary" class="backtest-summary"></p>
@@ -282,6 +301,7 @@
   </main>
 
   <script src="model-params.js"></script>
+  <script src="theme.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

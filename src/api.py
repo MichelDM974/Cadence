@@ -232,7 +232,7 @@ def backtest(
         )
         predictions[model_name] = np.array(result["prevision"])
 
-    mae = {name: float(np.abs(pred - actual).mean()) for name, pred in predictions.items()}
+    mae = {name: _mae(pred, actual) for name, pred in predictions.items()}
     mae_naive = mae["naive"]
     improvement_pct = {
         name: (None if mae_naive == 0 else round((mae_naive - value) / mae_naive * 100, 1))
@@ -274,6 +274,7 @@ def _sarimax_coordinate_search(
     actual: np.ndarray,
     s: int,
     passes: int = 2,
+    initial_mae: float | None = None,
 ) -> tuple[dict, float]:
     best = {"p": 1, "q": 1, "P": 1, "Q": 1}
 
@@ -288,9 +289,15 @@ def _sarimax_coordinate_search(
             return None
         return _mae(prevision, actual)
 
-    best_mae = score(best)
-    if best_mae is None:
-        best_mae = float("inf")
+    # p=q=P=Q=1 est le point de départ ci-dessus : si l'appelant l'a déjà évalué
+    # (ex. mae_before de la config actuelle, quand elle vaut déjà ce point de départ),
+    # inutile de le refitter une seconde fois.
+    if initial_mae is not None:
+        best_mae = initial_mae
+    else:
+        best_mae = score(best)
+        if best_mae is None:
+            best_mae = float("inf")
 
     for _ in range(passes):
         improved = False
@@ -355,34 +362,59 @@ def autotune(
 
     if "sarimax" in models:
         current = model_params.get("sarimax") or {"order": [1, 1, 1], "seasonal_order": [1, 1, 1, 7]}
-        s = int(current.get("seasonal_order", [1, 1, 1, 7])[3])
-        mae_before = _mae(
-            forecast(train, horizon, exog_hist=exog_hist, exog_future=exog_future, model="sarimax", model_params=current)["prevision"],
-            actual,
+        current_order = list(current.get("order") or [1, 1, 1])
+        current_seasonal = list(current.get("seasonal_order") or [1, 1, 1, 7])
+        s = int(current_seasonal[3]) if len(current_seasonal) > 3 else 7
+        try:
+            mae_before = _mae(
+                forecast(train, horizon, exog_hist=exog_hist, exog_future=exog_future, model="sarimax", model_params=current)["prevision"],
+                actual,
+            )
+        except Exception:
+            # config actuelle injouable (ex. paramètres invalides ressaisis à la main) :
+            # on ne peut pas la comparer, la recherche ci-dessous devient la seule option
+            mae_before = None
+        is_default_config = current_order == [1, 1, 1] and current_seasonal == [1, 1, 1, 7]
+        found, found_mae = _sarimax_coordinate_search(
+            train, horizon, exog_hist, exog_future, actual, s,
+            initial_mae=mae_before if is_default_config and mae_before is not None else None,
         )
-        found, found_mae = _sarimax_coordinate_search(train, horizon, exog_hist, exog_future, actual, s)
         # la recherche part toujours de p=q=P=Q=1 : si la config déjà en place
         # (potentiellement différente) fait mieux que tout ce qu'elle a trouvé,
         # on la garde plutôt que de régresser silencieusement.
-        if found_mae <= mae_before:
-            best_order, best_seasonal, best_mae = found["order"], found["seasonal_order"], found_mae
+        if mae_before is not None and mae_before <= found_mae:
+            best_order, best_seasonal, best_mae = current_order, current_seasonal, mae_before
         else:
-            best_order, best_seasonal, best_mae = list(current["order"]), list(current["seasonal_order"]), mae_before
+            best_order, best_seasonal, best_mae = found["order"], found["seasonal_order"], found_mae
         result["sarimax"] = {
             "order": best_order,
             "seasonal_order": best_seasonal,
-            "mae_before": round(mae_before, 2),
+            "mae_before": None if mae_before is None else round(mae_before, 2),
             "mae_after": round(best_mae, 2),
         }
 
     if "prophet" in models:
         current = model_params.get("prophet") or {}
-        mae_before = _mae(
-            forecast(train, horizon, exog_hist=exog_hist, exog_future=exog_future, model="prophet", model_params=current)["prevision"],
-            actual,
+        try:
+            mae_before = _mae(
+                forecast(train, horizon, exog_hist=exog_hist, exog_future=exog_future, model="prophet", model_params=current)["prevision"],
+                actual,
+            )
+        except Exception:
+            mae_before = None
+        # évite de refitter le premier candidat de la grille s'il est identique à la
+        # config actuelle déjà évaluée ci-dessus (cas courant : aucune config sauvegardée).
+        current_cps = current.get("changepoint_prior_scale", 0.05)
+        current_sps = current.get("seasonality_prior_scale", 10.0)
+        current_mode = current.get("seasonality_mode", "additive")
+        best = (
+            {"changepoint_prior_scale": current_cps, "seasonality_prior_scale": current_sps, "seasonality_mode": current_mode, "mae": mae_before}
+            if mae_before is not None
+            else None
         )
-        best = None
         for cps, sps, mode in _PROPHET_CANDIDATES:
+            if best is not None and (cps, sps, mode) == (current_cps, current_sps, current_mode):
+                continue
             try:
                 prevision = forecast_prophet(
                     train, horizon, exog_hist=exog_hist, exog_future=exog_future,
@@ -394,8 +426,9 @@ def autotune(
             if best is None or mae < best["mae"]:
                 best = {"changepoint_prior_scale": cps, "seasonality_prior_scale": sps, "seasonality_mode": mode, "mae": mae}
         # même garde-fou que pour SARIMAX : ne jamais remplacer une config déjà
-        # meilleure que tous les candidats testés.
-        if best is None or best["mae"] > mae_before:
+        # meilleure que tous les candidats testés (si elle est injouable, mae_before
+        # vaut None et on garde le meilleur candidat trouvé, faute de mieux).
+        if best is None or (mae_before is not None and best["mae"] > mae_before):
             best = {
                 "changepoint_prior_scale": current.get("changepoint_prior_scale", 0.05),
                 "seasonality_prior_scale": current.get("seasonality_prior_scale", 10.0),
@@ -406,8 +439,8 @@ def autotune(
             "changepoint_prior_scale": best["changepoint_prior_scale"],
             "seasonality_prior_scale": best["seasonality_prior_scale"],
             "seasonality_mode": best["seasonality_mode"],
-            "mae_before": round(mae_before, 2),
-            "mae_after": round(best["mae"], 2),
+            "mae_before": None if mae_before is None else round(mae_before, 2),
+            "mae_after": None if best["mae"] is None else round(best["mae"], 2),
         }
 
     return result

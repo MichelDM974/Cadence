@@ -85,14 +85,32 @@ function savePresets(presets) {
   localStorage.setItem(PRESETS_STORAGE_KEY, JSON.stringify(presets));
 }
 
+// Ne crée rien si un préréglage du même nom (insensible à la casse/espaces)
+// existe déjà pour ce modèle — renvoie ce préréglage existant à la place, et
+// `created: false` pour que l'appelant affiche un message plutôt qu'un doublon.
 function addPreset(modelName, name, params) {
   const presets = loadPresets();
-  presets[modelName].push({ id: crypto.randomUUID(), name, params });
+  const trimmed = name.trim();
+  const existing = presets[modelName].find((p) => p.name.trim().toLowerCase() === trimmed.toLowerCase());
+  if (existing) return { presets, created: false, preset: existing };
+
+  const preset = { id: crypto.randomUUID(), name: trimmed, params };
+  presets[modelName].push(preset);
   savePresets(presets);
-  return presets;
+  return { presets, created: true, preset };
+}
+
+// Id réservé et fixe (pas d'UUID) pour le préréglage "Défaut" pré-installé
+// ci-dessous : verrouillé en écriture (ni renommable, ni supprimable) pour
+// toujours garder un point de départ connu dans les menus de configuration.
+const DEFAULT_PRESET_ID = "default";
+
+function isDefaultPreset(id) {
+  return id === DEFAULT_PRESET_ID;
 }
 
 function renamePreset(modelName, id, name) {
+  if (isDefaultPreset(id)) return loadPresets();
   const presets = loadPresets();
   const preset = presets[modelName].find((p) => p.id === id);
   if (preset) preset.name = name;
@@ -101,28 +119,35 @@ function renamePreset(modelName, id, name) {
 }
 
 function deletePreset(modelName, id) {
+  if (isDefaultPreset(id)) return loadPresets();
   const presets = loadPresets();
   presets[modelName] = presets[modelName].filter((p) => p.id !== id);
   savePresets(presets);
   return presets;
 }
 
-// Pré-installe une configuration "Défaut Cadence" par modèle au tout premier
+// Pré-installe une configuration "Défaut" par modèle au tout premier
 // chargement (rien à faire pour avoir un point de départ dans les menus de
-// l'étape 4 / génération en masse) — ne revient jamais une fois ce premier
-// chargement passé, y compris si l'utilisateur supprime ensuite ce préréglage.
+// l'étape 4 / génération en masse). Idempotent : sur les navigateurs qui
+// avaient déjà l'ancien préréglage "Défaut Cadence" (id aléatoire, non
+// verrouillé), le migre en place vers l'id/nom réservés ci-dessus.
 function ensureDefaultPresets() {
-  if (localStorage.getItem("cadence-model-presets-seeded")) return;
   const presets = loadPresets();
+  let changed = false;
   for (const modelName of Object.keys(DEFAULT_MODEL_PARAMS)) {
-    if (presets[modelName].length === 0) {
-      presets[modelName].push({ id: crypto.randomUUID(), name: "Défaut Cadence", params: { ...DEFAULT_MODEL_PARAMS[modelName] } });
+    const list = presets[modelName];
+    if (list.some((p) => p.id === DEFAULT_PRESET_ID)) continue;
+    const legacy = list.find((p) => p.name === "Défaut Cadence");
+    if (legacy) {
+      legacy.id = DEFAULT_PRESET_ID;
+      legacy.name = "Défaut";
+    } else {
+      list.unshift({ id: DEFAULT_PRESET_ID, name: "Défaut", params: { ...DEFAULT_MODEL_PARAMS[modelName] } });
     }
+    changed = true;
   }
-  savePresets(presets);
-  localStorage.setItem("cadence-model-presets-seeded", "true");
+  if (changed) savePresets(presets);
 }
-ensureDefaultPresets();
 
 // <option> d'un menu de sélection de configuration pour `modelName` — utilisé
 // à l'étape 4 et dans la génération en masse pour appliquer un préréglage
@@ -157,6 +182,21 @@ function readModelParamsFromInputs() {
 
 // Payload envoyé au serveur : reconstruit order/seasonal_order pour SARIMAX
 // à partir des 7 champs séparés (p,d,q,P,D,Q,s) affichés dans le formulaire.
+// Onglets repliables générique (ex. "Ruptures de rythme" sur index.html,
+// "Configurations" par modèle sur models.html) : un bouton `.collapsible-tab`
+// avec `aria-controls` pointant vers le panneau à révéler.
+function setupCollapsibleTabs() {
+  document.querySelectorAll(".collapsible-tab").forEach((tab) => {
+    const panel = document.getElementById(tab.getAttribute("aria-controls"));
+    tab.addEventListener("click", () => {
+      const expanded = panel.hidden; // état après bascule
+      panel.hidden = !expanded;
+      tab.setAttribute("aria-expanded", String(expanded));
+      tab.querySelector(".collapsible-tab-icon").textContent = expanded ? "▾" : "▸";
+    });
+  });
+}
+
 function modelParamsPayload() {
   const p = loadModelParams();
   return {
