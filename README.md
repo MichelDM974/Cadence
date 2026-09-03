@@ -44,10 +44,11 @@ Et sur *Store Sales - Time Series Forecasting* (54 magasins × 33 catégories, 1
 
 | Configuration | RMSLE |
 |---|---|
-| SARIMAX seul (aucun exogène) | **0.42726** |
+| LightGBM (tweedie, exogènes pétrole/fériés/magasin, lags fins + annuel) | **0.42475** |
+| SARIMAX seul (aucun exogène) | 0.42726 |
 | SARIMAX + `onpromotion` (jointure par entité) | 0.44460 |
 | Prophet + `onpromotion` (jointure par entité) | 0.51275 |
-| LightGBM + `onpromotion` (jointure par entité, génération en masse) | 0.55166 |
+| LightGBM + `onpromotion` (jointure par entité, génération en masse, v1) | 0.55166 |
 
 (0.501 et 0.37294 respectivement en tête des leaderboards Kaggle, pour référence.) SARIMAX bat par ailleurs une baseline naïve ("même jour la semaine dernière") sur 91% des restaurants testés (amélioration médiane +28,4% sur le MAE).
 
