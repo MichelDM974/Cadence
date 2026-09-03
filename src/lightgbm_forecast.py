@@ -23,7 +23,15 @@ ROLLING_WINDOWS = (7, 28)
 TAIL_WINDOW_DAYS = 35  # >= max(lag, rolling) + marge : borne la fenêtre glissante de la boucle récursive
 
 LGB_PARAMS = {
-    "objective": "regression",
+    # tweedie plutôt que L2 sur log1p(visitors) : la cible (fréquentation/
+    # ventes quotidiennes) est typiquement zero-inflated et très asymétrique
+    # (beaucoup d'entités à faible volume, quelques pics) — L2 sur cible
+    # log-transformée introduit un biais de sous-prévision documenté sur ce
+    # type de données (cf. benchmark Kaggle *Store Sales*, journal-de-bord :
+    # 0.55166 -> 0.42475 RMSLE avec ce même changement). Approche utilisée
+    # par la gagnante du Kaggle M5 Forecasting - Accuracy (LightGBM+tweedie).
+    "objective": "tweedie",
+    "tweedie_variance_power": 1.1,
     "metric": "rmse",
     "learning_rate": 0.05,
     "num_leaves": 63,
@@ -183,7 +191,11 @@ def train_bulk_model(
 ) -> lgb.Booster:
     dataset = lgb.Dataset(
         train_df[feature_cols],
-        label=train_df["y"],
+        # cible en échelle brute (pas "y"/log1p) : tweedie applique son
+        # propre log-link en interne, cf. LGB_PARAMS. "y" reste calculé par
+        # add_lag_features, mais uniquement comme base des lags/moyennes
+        # glissantes en features, pas comme cible d'entraînement.
+        label=train_df["visitors"],
         categorical_feature=[c for c in categorical_cols if c in feature_cols],
         free_raw_data=False,
     )
@@ -230,8 +242,8 @@ def predict_bulk(
         combined = add_lag_features(combined, group_cols)
 
         today_rows = combined.loc[combined["date"] == target_date].reset_index(drop=True)
-        pred_y = booster.predict(today_rows[feature_cols])
-        pred_visitors = np.clip(np.expm1(pred_y), 0, None)
+        # tweedie prédit déjà en échelle brute (log-link inversé en interne) : pas d'expm1 ici
+        pred_visitors = np.clip(booster.predict(today_rows[feature_cols]), 0, None)
 
         day_result = today_rows[[*group_cols, "date"]].copy()
         day_result["prevision"] = np.round(pred_visitors, 1)
