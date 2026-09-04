@@ -53,21 +53,38 @@ def add_calendar_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def add_lag_features(df: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
+def add_lag_features(
+    df: pd.DataFrame,
+    group_cols: list[str],
+    lag_days: tuple[int, ...] = LAG_DAYS,
+    rolling_windows: tuple[int, ...] = ROLLING_WINDOWS,
+    include_yoy: bool = False,
+) -> pd.DataFrame:
     """Ajoute retards et moyennes glissantes de log1p(visitors), calculés en
     quelques appels vectorisés sur toutes les entités à la fois (jamais une
     boucle Python par entité — le vrai goulot d'étranglement sur un gros
     fichier, cf. le même principe déjà appliqué ailleurs dans ce projet pour
     le regroupement des lignes par entité).
+
+    `lag_days`/`rolling_windows`/`include_yoy` sont des overrides opt-in (cf.
+    benchmarks *Store Sales* et *Recruit*, journal-de-bord) : les défauts
+    reproduisent le comportement historique (lean) de l'app, inchangé tant
+    que l'appelant ne passe rien. `include_yoy` suppose `28` dans
+    `rolling_windows` (sert de base à `yoy_trend`) et au moins ~1 an
+    d'historique pour être utile — sans quoi la feature reste NaN.
     """
     df = df.sort_values([*group_cols, "date"]).reset_index(drop=True)
     df["y"] = np.log1p(df["visitors"].clip(lower=0))
 
     grouped = df.groupby(group_cols, observed=True)["y"]
-    for k in LAG_DAYS:
+    for k in lag_days:
         df[f"lag_{k}"] = grouped.shift(k)
-    for w in ROLLING_WINDOWS:
+    for w in rolling_windows:
         df[f"roll_mean_{w}"] = grouped.transform(lambda s, w=w: s.shift(1).rolling(w, min_periods=1).mean())
+
+    if include_yoy:
+        df["roll_mean_28_yoy"] = grouped.transform(lambda s: s.shift(1 + 364).rolling(28, min_periods=1).mean())
+        df["yoy_trend"] = df["roll_mean_28"] - df["roll_mean_28_yoy"]
 
     return df
 
@@ -212,16 +229,20 @@ def predict_bulk(
     feature_cols: list[str],
     horizon: int,
     on_progress: Callable[[int, int], None] | None = None,
+    lag_days: tuple[int, ...] = LAG_DAYS,
+    rolling_windows: tuple[int, ...] = ROLLING_WINDOWS,
+    include_yoy: bool = False,
+    tail_window_days: int = TAIL_WINDOW_DAYS,
 ) -> pd.DataFrame:
     """Prévision récursive : à chaque jour de l'horizon, ne retraite qu'une
-    fenêtre glissante bornée (TAIL_WINDOW_DAYS x nb d'entités, pas tout
+    fenêtre glissante bornée (tail_window_days x nb d'entités, pas tout
     l'historique), recalcule les features pour toutes les entités d'un coup,
     un seul `predict()` pour ce jour, puis réinjecte la prédiction comme
     valeur connue pour l'étape suivante.
     """
     tail = history.sort_values([*group_cols, "date"]).reset_index(drop=True)
     rank_from_end = tail.groupby(group_cols, observed=True).cumcount(ascending=False)
-    tail = tail[rank_from_end < TAIL_WINDOW_DAYS].reset_index(drop=True)
+    tail = tail[rank_from_end < tail_window_days].reset_index(drop=True)
 
     future_dates = sorted(future_exog["date"].unique())
     results = []
@@ -239,7 +260,7 @@ def predict_bulk(
         # retrouvent attribuées à la mauvaise entité (bug réel, détecté via
         # un score Kaggle très dégradé : des magasins à volume quasi nul
         # héritaient des prévisions de magasins à gros volume).
-        combined = add_lag_features(combined, group_cols)
+        combined = add_lag_features(combined, group_cols, lag_days, rolling_windows, include_yoy)
 
         today_rows = combined.loc[combined["date"] == target_date].reset_index(drop=True)
         # tweedie prédit déjà en échelle brute (log-link inversé en interne) : pas d'expm1 ici
@@ -253,7 +274,7 @@ def predict_bulk(
         predicted_rows["visitors"] = pred_visitors
         tail = pd.concat([tail, predicted_rows], ignore_index=True, sort=False)
         rank_from_end = tail.groupby(group_cols, observed=True).cumcount(ascending=False)
-        tail = tail[rank_from_end < TAIL_WINDOW_DAYS].reset_index(drop=True)
+        tail = tail[rank_from_end < tail_window_days].reset_index(drop=True)
 
         if on_progress is not None:
             on_progress(h, horizon)
@@ -285,11 +306,19 @@ def run_bulk_lightgbm_forecast(
     on_progress: Callable[[int, int], None] | None = None,
     lgb_params: dict | None = None,
     num_boost_round: int | None = None,
+    feature_config: dict | None = None,
 ) -> tuple[list[dict], set[tuple[str, ...]]]:
     """Point d'entrée appelé depuis _run_bulk_forecast (api.py) quand
     model == "lightgbm". Retourne (rows, skipped_combos) dans la forme
     attendue par l'assemblage CSV existant (tri + to_csv), réutilisé tel
     quel côté appelant.
+
+    `feature_config` (opt-in, absent par défaut = comportement lean actuel) :
+    `{"lag_days": (...), "rolling_windows": (...), "include_yoy": bool}` —
+    cf. benchmarks *Store Sales*/*Recruit* (journal-de-bord) pour l'origine
+    de ces axes et pourquoi ils ne sont pas activés par défaut (utiles
+    seulement avec un historique long et homogène, pas garanti pour
+    l'usage généraliste de l'app).
     """
     history, future_exog, skipped = _build_entity_frames(
         raw, date_col, value_col, group_cols, horizon, combos, group_indices, extra_cols,
@@ -305,13 +334,22 @@ def run_bulk_lightgbm_forecast(
     _apply_code_maps(history, group_cols, code_maps)
     _apply_code_maps(future_exog, group_cols, code_maps)
 
-    train_df = add_lag_features(add_calendar_features(history.copy()), group_cols)
+    feature_config = feature_config or {}
+    lag_days = tuple(feature_config.get("lag_days", LAG_DAYS))
+    rolling_windows = tuple(feature_config.get("rolling_windows", ROLLING_WINDOWS))
+    include_yoy = bool(feature_config.get("include_yoy", False))
+    tail_window_days = max(TAIL_WINDOW_DAYS, max(*lag_days, *rolling_windows) + 7, 364 + 28 + 7 if include_yoy else 0)
+
+    train_df = add_lag_features(add_calendar_features(history.copy()), group_cols, lag_days, rolling_windows, include_yoy)
     code_cols = [f"{c}__code" for c in group_cols]
     non_feature = {"date", "visitors", "y", *group_cols}
     feature_cols = [c for c in train_df.columns if c not in non_feature]
 
     booster = train_bulk_model(train_df, feature_cols, code_cols, lgb_params, num_boost_round)
-    predictions = predict_bulk(booster, history, future_exog, group_cols, feature_cols, horizon, on_progress)
+    predictions = predict_bulk(
+        booster, history, future_exog, group_cols, feature_cols, horizon, on_progress,
+        lag_days, rolling_windows, include_yoy, tail_window_days,
+    )
 
     rows = []
     for rec in predictions.to_dict("records"):

@@ -2,6 +2,7 @@ import io
 
 import numpy as np
 import pandas as pd
+import pytest
 from fastapi.testclient import TestClient
 
 import lightgbm_forecast as lf
@@ -77,6 +78,46 @@ def test_run_bulk_lightgbm_forecast_returns_expected_shape():
     assert skipped == set()
     assert len(rows) == len(combos) * 10
     assert {tuple(sorted(r.keys())) for r in rows} == {("date", "family", "prevision", "store_nbr")}
+    assert all(r["prevision"] >= 0 for r in rows)
+
+
+def test_add_lag_features_include_yoy_computes_trend_from_last_year():
+    # 400 jours : assez pour que shift(365).rolling(28) ait des valeurs non-NaN
+    # sur la fin de la série (cf. add_lag_features(include_yoy=True)).
+    dates = pd.date_range("2023-01-01", periods=400, freq="D")
+    df = pd.DataFrame({"store_nbr": ["1"] * 400, "date": dates, "visitors": [10.0 + (i % 7) for i in range(400)]})
+    result = lf.add_lag_features(df, ["store_nbr"], rolling_windows=(7, 28), include_yoy=True)
+
+    assert "roll_mean_28_yoy" in result.columns
+    assert "yoy_trend" in result.columns
+    last = result.iloc[-1]
+    assert not pd.isna(last["roll_mean_28_yoy"])
+    assert last["yoy_trend"] == pytest.approx(last["roll_mean_28"] - last["roll_mean_28_yoy"])
+    # historique insuffisant (< 1 an) : la feature reste NaN, pas une erreur
+    assert pd.isna(result.iloc[10]["roll_mean_28_yoy"])
+
+
+def test_run_bulk_lightgbm_forecast_feature_config_is_opt_in():
+    """feature_config par défaut (absent) doit reproduire exactement le
+    comportement lean actuel — les axes (lags fins, yoy_trend, régularisation)
+    sont opt-in, jamais des changements de défaut (cf. journal-de-bord :
+    aucun n'améliore Store Sales et Recruit à la fois)."""
+    raw = _multi_entity_frame(60, [("1", "A"), ("2", "B")])
+    group_cols = ["store_nbr", "family"]
+    combos, group_indices = _combos_and_indices(raw, group_cols)
+
+    rows, skipped = lf.run_bulk_lightgbm_forecast(
+        raw, "date", "sales", group_cols, 10, combos, group_indices, [],
+        None, [],
+        None, None, None, None,
+        "store_nbr", "family", None, None,
+        _daily_series, align_external_exog, None,
+        None, None,
+        {"rolling_windows": (7, 28), "include_yoy": True},
+    )
+
+    assert skipped == set()
+    assert len(rows) == len(combos) * 10
     assert all(r["prevision"] >= 0 for r in rows)
 
 
