@@ -9,6 +9,14 @@ let lastBacktestData = null;
 // el() et les fonctions/constantes de paramètres de modèles (loadModelParams,
 // modelParamsPayload, ...) viennent de model-params.js, chargé avant ce fichier.
 
+// Le backend renvoie les dates en ISO (AAAA-MM-JJ) ; converties en JJ/MM/AAAA
+// pour tout affichage utilisateur (messages, tableaux, axes de graphique) —
+// jamais pour les exports de données (CSV), qui gardent le format d'origine.
+function formatDateFR(isoDate) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(isoDate);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : isoDate;
+}
+
 const MODEL_LABELS = { naive: "Naïve", sarimax: "SARIMAX", prophet: "Prophet" };
 
 const EXOG_LABELS = { ferie: "Jours fériés", vacances: "Vacances scolaires", meteo: "Météo" };
@@ -230,14 +238,14 @@ function setupExogManager() {
       const parts = [`Format correct${body.n_entities != null ? ` — ${body.n_entities} entité(s) détectée(s)` : ""}.`];
       if (body.history_gap_days > 0) {
         parts.push(
-          `⚠ ${body.history_gap_days} jour(s) d'historique non couverts avant le ${body.date_min} — ` +
+          `⚠ ${body.history_gap_days} jour(s) d'historique non couverts avant le ${formatDateFR(body.date_min)} — ` +
             `valeur reportée en arrière sur cette période, probablement fausse.`
         );
       }
       parts.push(
         body.days_covered > 0
-          ? `Fournit de vraies valeurs futures jusqu'à ${body.days_covered} jour(s) de prévision après le ${body.main_last_date}.`
-          : `Aucune vraie valeur future après le ${body.main_last_date} : la dernière valeur connue sera reportée sur tout l'horizon prédit.`
+          ? `Fournit de vraies valeurs futures jusqu'à ${body.days_covered} jour(s) de prévision après le ${formatDateFR(body.main_last_date)}.`
+          : `Aucune vraie valeur future après le ${formatDateFR(body.main_last_date)} : la dernière valeur connue sera reportée sur tout l'horizon prédit.`
       );
       status.textContent = parts.join(" ");
       status.className = `status ${body.history_gap_days > 0 || body.days_covered === 0 ? "status--error" : "status--ok"}`;
@@ -279,7 +287,7 @@ function renderLineChart(canvasId, labels, datasets) {
 
   charts[canvasId] = new Chart(canvas, {
     type: "line",
-    data: { labels, datasets },
+    data: { labels: labels.map(formatDateFR), datasets },
     options: {
       responsive: true,
       animation: false,
@@ -853,7 +861,7 @@ async function fetchAutotune(source, horizon) {
 function renderAnalysis(data) {
   lastAnalysisData = data;
   el("results").hidden = false;
-  el("period-label").textContent = `${data.dates[0]} → ${data.dates[data.dates.length - 1]} (${data.dates.length} jours)`;
+  el("period-label").textContent = `${formatDateFR(data.dates[0])} → ${formatDateFR(data.dates[data.dates.length - 1])} (${data.dates.length} jours)`;
 
   const accent = cssVar("--accent");
   const accent2 = cssVar("--accent-2");
@@ -891,7 +899,7 @@ function renderAnalysis(data) {
 
   const tbody = document.querySelector("#anomalies-table tbody");
   tbody.innerHTML = data.anomalies.length
-    ? data.anomalies.map((a) => `<tr><td>${a.date}</td><td>${a.resid > 0 ? "+" : ""}${a.resid}</td></tr>`).join("")
+    ? data.anomalies.map((a) => `<tr><td>${formatDateFR(a.date)}</td><td>${a.resid > 0 ? "+" : ""}${a.resid}</td></tr>`).join("")
     : `<tr><td colspan="2" class="hint">Aucune rupture détectée</td></tr>`;
   // reste replié tant qu'on n'a pas cliqué sur l'onglet "Ruptures de rythme" —
   // fermé par défaut, une nouvelle analyse ne doit pas le rouvrir tout seul
