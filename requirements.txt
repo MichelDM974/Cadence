@@ -6,5 +6,6 @@ matplotlib
 fastapi
 uvicorn[standard]
 python-multipart
+itsdangerous  # requis par SessionMiddleware (comptes utilisateurs) : pas une dépendance de fastapi
 requests
 holidays
