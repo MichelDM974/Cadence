@@ -762,3 +762,41 @@ def test_upload_autotune_renvoie_une_config():
     )
     assert resp.status_code == 200, resp.text
     assert "sarimax" in resp.json()
+
+
+def test_serie_json_remplace_les_non_finis_par_null():
+    """Un ajustement non convergé peut produire des NaN (clip les laisse
+    passer) : sérialisés tels quels, ils faisaient tomber l'endpoint en 500,
+    "Out of range float values are not JSON compliant". Reproduit en CI sur
+    une série déterministe, jamais en local — d'où ce test qui ne dépend
+    d'aucune version de statsmodels."""
+    import math
+
+    assert api._serie_json([1.0, float("nan"), 3.14159]) == [1.0, None, 3.1]
+    assert api._serie_json([float("inf"), float("-inf")]) == [None, None]
+    assert all(v is None or math.isfinite(v) for v in api._serie_json([float("nan"), 2.0]))
+
+
+def test_forecast_serialisable_meme_si_le_modele_renvoie_des_nan(monkeypatch):
+    """Bout en bout : même avec un modèle qui ne renvoie que des NaN, la
+    réponse doit rester du JSON valide (valeurs à null) plutôt qu'un 500."""
+    import numpy as np
+
+    def faux_sarimax(df, horizon, **kwargs):
+        dates = pd.date_range(df.index.max() + pd.Timedelta(days=1), periods=horizon, freq="D")
+        nans = [np.nan] * horizon
+        return {
+            "dates": [d.date().isoformat() for d in dates],
+            "prevision": api._serie_json(nans),
+            "ic_bas": api._serie_json(nans),
+            "ic_haut": api._serie_json(nans),
+        }
+
+    monkeypatch.setitem(api.FORECAST_MODELS, "sarimax", faux_sarimax)
+    resp = client.post(
+        "/api/upload/forecast",
+        files={"file": ("main.csv", _csv_deux_saisons(), "text/csv")},
+        data={"date_col": "date", "value_col": "value", "horizon": "7", "model": "sarimax"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["prevision"] == [None] * 7

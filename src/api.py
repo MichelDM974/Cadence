@@ -232,10 +232,21 @@ def forecast_sarimax(
 
     return {
         "dates": [d.date().isoformat() for d in mean.index],
-        "prevision": mean.round(1).tolist(),
-        "ic_bas": ci.iloc[:, 0].round(1).tolist(),
-        "ic_haut": ci.iloc[:, 1].round(1).tolist(),
+        "prevision": _serie_json(mean),
+        "ic_bas": _serie_json(ci.iloc[:, 0]),
+        "ic_haut": _serie_json(ci.iloc[:, 1]),
     }
+
+
+def _serie_json(valeurs) -> list[float | None]:
+    """Arrondit une série de prévision en remplaçant les valeurs non finies
+    par None. Un ajustement qui ne converge pas (série constante, quasi
+    nulle, dégénérée) peut renvoyer des NaN — que `clip` laisse passer, une
+    comparaison avec NaN étant toujours fausse — et JSON ne sait pas les
+    représenter : l'endpoint tombait alors en 500 illisible côté client.
+    None dit "pas de valeur ici", ce que le graphe rend comme un trou.
+    """
+    return [None if not math.isfinite(v) else round(float(v), 1) for v in valeurs]
 
 
 def forecast_prophet(
@@ -277,9 +288,9 @@ def forecast_prophet(
 
     return {
         "dates": [d.date().isoformat() for d in future_dates],
-        "prevision": result["yhat"].clip(lower=0).round(1).tolist(),
-        "ic_bas": result["yhat_lower"].clip(lower=0).round(1).tolist(),
-        "ic_haut": result["yhat_upper"].clip(lower=0).round(1).tolist(),
+        "prevision": _serie_json(result["yhat"].clip(lower=0)),
+        "ic_bas": _serie_json(result["yhat_lower"].clip(lower=0)),
+        "ic_haut": _serie_json(result["yhat_upper"].clip(lower=0)),
     }
 
 
