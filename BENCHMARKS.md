@@ -93,6 +93,21 @@ représentative que le test Kaggle réel, déjà documenté le 03/09) — la
 comparaison **relative** entre les deux lignes reste fiable (même run, même
 fenêtre), l'écart absolu avec Kaggle non.
 
+### Store Sales — transactions.csv + cluster×famille (07/09/2026, `forecast_submission_lightgbm_store_sales.py`)
+
+| Configuration | RMSLE |
+|---|---|
+| lags fins + yoy + régularisation réduite (03/09, ci-dessous) | 0.498 (agrégat) / 0.4232 (hors SCHOOL AND OFFICE SUPPLIES) |
+| **+ fréquentation par magasin (`transactions.csv`) + moyenne cluster×famille** | **0.49359 (agrégat) / 0.42235 (hors la même famille)** |
+
+Gain marginal (~0.2%) hors la famille pathologique, agrégat quasi inchangé —
+`transactions.csv` (gelé sur le dernier jour connu pendant l'horizon, absent
+au-delà contrairement à `oil.csv`) et l'agrégat cluster×famille apportent un
+signal complémentaire mais ne s'attaquent pas au vrai verrou : la croissance
+de SCHOOL AND OFFICE SUPPLIES (rentrée scolaire) reste hors de portée d'un
+arbre de décision, quelles que soient les features en entrée (cf. ligne
+ci-dessous). Pas resoumis à Kaggle pour un gain de cette taille.
+
 ### Store Sales — combiné (lags fins + yoy + régularisation réduite), 03/09/2026
 
 | Configuration | RMSLE |
