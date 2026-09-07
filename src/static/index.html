@@ -17,7 +17,10 @@
       <div class="account-menu">
         <button type="button" id="account-menu-btn" title="Paramètres" aria-label="Paramètres">⚙</button>
         <div id="account-dropdown" class="account-dropdown" hidden>
+          <p class="account-user">Connecté : <strong id="account-username"></strong></p>
           <a href="models.html" class="account-dropdown-item">Modèles</a>
+          <a href="theorie.html" class="account-dropdown-item">Théorie</a>
+          <button type="button" id="logout-btn" class="account-dropdown-item">Se déconnecter</button>
         </div>
       </div>
     </div>
@@ -284,6 +287,7 @@
     </section>
   </main>
 
+  <script src="auth-guard.js"></script>
   <script src="model-params.js"></script>
   <script src="menu.js"></script>
   <script src="app.js"></script>

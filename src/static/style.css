@@ -407,7 +407,7 @@ label {
   color: var(--muted);
 }
 
-select, input[type="number"], input[type="file"], input[type="text"] {
+select, input[type="number"], input[type="file"], input[type="text"], input[type="password"] {
   display: block;
   margin: 4px 0 12px;
   padding: 8px 10px;
@@ -775,11 +775,10 @@ button + button {
 }
 
 .model-formula {
-  position: relative;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 14px 44px;
+  padding: 14px 20px;
   margin: 4px 0 14px;
 }
 
@@ -841,28 +840,16 @@ button + button {
   margin: 10px 0 0;
 }
 
-.model-formula-info-btn {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  background: transparent;
-  color: var(--muted);
+.theorie-chart-box {
+  background: var(--bg);
   border: 1px solid var(--border);
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  font-size: 0.85rem;
-  line-height: 1;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin: 4px 0 14px;
 }
 
-.model-formula-info-btn:hover,
-.model-formula-info-btn.active {
-  color: var(--accent);
-  border-color: var(--accent);
+.theorie-chart-box .decomposition-grid {
+  margin-bottom: 0;
 }
 
 .chart-legend {
@@ -977,4 +964,58 @@ th, td {
 
 .backtest-summary strong {
   color: var(--accent);
+}
+
+/* login.html / setup.html : page de connexion, pas de header applicatif. */
+.auth-body {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 360px;
+  margin: 16px;
+}
+
+.auth-card h1 {
+  color: var(--accent);
+  margin: 0 0 2px;
+}
+
+.auth-card .tagline {
+  color: var(--muted);
+  margin: 0 0 20px;
+}
+
+.auth-card select, .auth-card input {
+  max-width: none;
+}
+
+.auth-card button {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.auth-switch {
+  margin-top: 16px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.auth-switch a {
+  color: var(--accent);
+}
+
+.account-user {
+  padding: 6px 12px 2px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.account-user strong {
+  color: var(--text);
 }

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cadence — Connexion</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="auth-body">
+  <div class="panel auth-card">
+    <h1>Cadence</h1>
+    <p class="tagline">Comprendre pour prévoir.</p>
+    <form id="login-form">
+      <label for="login-username">Identifiant</label>
+      <input type="text" id="login-username" name="username" autocomplete="username" required autofocus />
+      <label for="login-password">Mot de passe</label>
+      <input type="password" id="login-password" name="password" autocomplete="current-password" required />
+      <button type="submit">Se connecter</button>
+      <p id="login-status" class="status"></p>
+    </form>
+  </div>
+  <script src="auth.js"></script>
+</body>
+</html>

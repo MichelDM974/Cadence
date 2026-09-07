@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cadence — Créer le compte</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="auth-body">
+  <div class="panel auth-card">
+    <h1>Cadence</h1>
+    <p class="tagline">Premier lancement : crée ton compte pour commencer.</p>
+    <form id="setup-form">
+      <label for="setup-username">Identifiant</label>
+      <input type="text" id="setup-username" name="username" autocomplete="username" required autofocus />
+      <label for="setup-password">Mot de passe</label>
+      <input type="password" id="setup-password" name="password" autocomplete="new-password" required />
+      <button type="submit">Créer le compte</button>
+      <p id="setup-status" class="status"></p>
+    </form>
+    <p class="hint">Les autres comptes (un par restaurateur) se créent ensuite avec le script
+      <code>src/create_user.py</code>, pas depuis cette page.</p>
+  </div>
+  <script src="auth.js"></script>
+</body>
+</html>

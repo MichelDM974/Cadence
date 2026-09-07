@@ -16,9 +16,10 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, File, Form, HTTPException, Query, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.staticfiles import StaticFiles
 from prophet import Prophet
+from starlette.middleware.sessions import SessionMiddleware
 from statsmodels.tsa.seasonal import STL
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 
@@ -39,9 +40,61 @@ logging.getLogger("prophet").setLevel(logging.WARNING)
 
 app = FastAPI(title="Cadence API")
 storage.init_db()
+app.add_middleware(SessionMiddleware, secret_key=storage.session_secret())
 
 STATIC_DIR = Path(__file__).parent / "static"
 MIN_BACKTEST_TRAIN_DAYS = 90
+
+
+def current_user(request: Request) -> dict:
+    user_id = request.session.get("user_id")
+    if user_id is None:
+        raise HTTPException(401, "Non connecté")
+    user = storage.get_user(user_id)
+    if user is None:
+        request.session.clear()
+        raise HTTPException(401, "Non connecté")
+    return user
+
+
+@app.get("/api/me")
+def api_me(request: Request):
+    user_id = request.session.get("user_id")
+    if user_id is None:
+        return {"logged_in": False, "needs_setup": not storage.has_any_user()}
+    user = storage.get_user(user_id)
+    if user is None:
+        request.session.clear()
+        return {"logged_in": False, "needs_setup": not storage.has_any_user()}
+    return {"logged_in": True, "username": user["username"]}
+
+
+@app.post("/api/setup")
+def api_setup(request: Request, username: str = Form(...), password: str = Form(...)):
+    if storage.has_any_user():
+        raise HTTPException(403, "Un compte existe déjà — utilise la page de connexion")
+    username = username.strip()
+    if not username or not password:
+        raise HTTPException(400, "Identifiant et mot de passe requis")
+    user_id = storage.create_user(username, password)
+    storage.claim_orphan_points(user_id)
+    request.session["user_id"] = user_id
+    return {"username": username}
+
+
+@app.post("/api/login")
+def api_login(request: Request, username: str = Form(...), password: str = Form(...)):
+    user = storage.verify_user(username.strip(), password)
+    if user is None:
+        raise HTTPException(401, "Identifiant ou mot de passe incorrect")
+    request.session["user_id"] = user["id"]
+    return {"username": user["username"]}
+
+
+@app.post("/api/logout")
+def api_logout(request: Request):
+    request.session.clear()
+    return {"logged_out": True}
 
 # Jobs de prévision "tous magasins", suivis en mémoire pour permettre une
 # barre de progression côté client (le traitement peut prendre plusieurs
@@ -1419,34 +1472,35 @@ async def api_save_point(
     use_ferie: bool = Form(True),
     use_vacances: bool = Form(True),
     use_meteo: bool = Form(True),
+    user: dict = Depends(current_user),
 ):
     df = parse_csv(await file.read(), date_col, value_col, store_col, store_value, category_col, category_value)
-    point_id = storage.save_point(name, df, location, use_ferie, use_vacances, use_meteo)
+    point_id = storage.save_point(user["id"], name, df, location, use_ferie, use_vacances, use_meteo)
     return {"id": point_id, "name": name}
 
 
 @app.get("/api/points")
-def api_list_points():
-    return storage.list_points()
+def api_list_points(user: dict = Depends(current_user)):
+    return storage.list_points(user["id"])
 
 
 @app.delete("/api/points/{point_id}")
-def api_delete_point(point_id: int):
-    if not storage.delete_point(point_id):
+def api_delete_point(point_id: int, user: dict = Depends(current_user)):
+    if not storage.delete_point(user["id"], point_id):
         raise HTTPException(404, "Point de vente introuvable")
     return {"deleted": True}
 
 
-def load_point_or_404(point_id: int) -> dict:
-    point = storage.load_point(point_id)
+def load_point_or_404(user: dict, point_id: int) -> dict:
+    point = storage.load_point(user["id"], point_id)
     if point is None:
         raise HTTPException(404, "Point de vente introuvable")
     return point
 
 
 @app.get("/api/points/{point_id}/analysis")
-def api_point_analysis(point_id: int):
-    point = load_point_or_404(point_id)
+def api_point_analysis(point_id: int, user: dict = Depends(current_user)):
+    point = load_point_or_404(user, point_id)
     flags, weather = flags_and_weather(
         point["df"], point["location"], point["use_ferie"], point["use_vacances"], point["use_meteo"]
     )
@@ -1459,8 +1513,9 @@ def api_point_forecast(
     horizon: int = Query(28, ge=7, le=90),
     model: str = Query("sarimax"),
     model_params: str | None = Query(None),
+    user: dict = Depends(current_user),
 ):
-    point = load_point_or_404(point_id)
+    point = load_point_or_404(user, point_id)
     exog_hist, exog_future = forecast_exog(
         point["df"], horizon, point["location"], point["use_ferie"], point["use_vacances"], point["use_meteo"]
     )
@@ -1471,8 +1526,13 @@ def api_point_forecast(
 
 
 @app.get("/api/points/{point_id}/backtest")
-def api_point_backtest(point_id: int, horizon: int = Query(28, ge=7, le=90), model_params: str | None = Query(None)):
-    point = load_point_or_404(point_id)
+def api_point_backtest(
+    point_id: int,
+    horizon: int = Query(28, ge=7, le=90),
+    model_params: str | None = Query(None),
+    user: dict = Depends(current_user),
+):
+    point = load_point_or_404(user, point_id)
     exog_hist, exog_future = backtest_exog(
         point["df"], horizon, point["location"], point["use_ferie"], point["use_vacances"], point["use_meteo"]
     )
@@ -1483,8 +1543,13 @@ def api_point_backtest(point_id: int, horizon: int = Query(28, ge=7, le=90), mod
 
 
 @app.get("/api/points/{point_id}/autotune")
-def api_point_autotune(point_id: int, horizon: int = Query(28, ge=7, le=90), model_params: str | None = Query(None)):
-    point = load_point_or_404(point_id)
+def api_point_autotune(
+    point_id: int,
+    horizon: int = Query(28, ge=7, le=90),
+    model_params: str | None = Query(None),
+    user: dict = Depends(current_user),
+):
+    point = load_point_or_404(user, point_id)
     exog_hist, exog_future = backtest_exog(
         point["df"], horizon, point["location"], point["use_ferie"], point["use_vacances"], point["use_meteo"]
     )
