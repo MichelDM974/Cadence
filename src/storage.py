@@ -208,4 +208,8 @@ def session_secret() -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         path.write_text(secrets.token_hex(32))
+    # Cette clé signe les cookies de session : quiconque la lit peut forger
+    # une session valide. Créée avec les droits par défaut (0644/0664 selon
+    # l'umask), elle était lisible par les autres comptes de la machine.
+    path.chmod(0o600)
     return path.read_text().strip()

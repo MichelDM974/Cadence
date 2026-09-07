@@ -84,11 +84,37 @@ def api_setup(request: Request, username: str = Form(...), password: str = Form(
     return {"username": username}
 
 
+# Anti-bruteforce : PBKDF2 à 200k itérations ne fait que plafonner le débit,
+# il n'empêche pas d'essayer en continu. Compté par IP et non par identifiant,
+# sinon n'importe qui pourrait bloquer le compte d'un tiers en enchaînant les
+# échecs sur son nom.
+LOGIN_MAX_ECHECS = 10
+LOGIN_FENETRE_SECONDES = 300
+_login_echecs: dict[str, list[float]] = {}
+
+
+def _login_bloque(cle: str) -> bool:
+    maintenant = time.time()
+    recents = [t for t in _login_echecs.get(cle, []) if maintenant - t < LOGIN_FENETRE_SECONDES]
+    if recents:
+        _login_echecs[cle] = recents
+    else:
+        _login_echecs.pop(cle, None)
+    return len(recents) >= LOGIN_MAX_ECHECS
+
+
 @app.post("/api/login")
 def api_login(request: Request, username: str = Form(...), password: str = Form(...)):
+    cle = request.client.host if request.client else "inconnu"
+    if _login_bloque(cle):
+        raise HTTPException(429, "Trop de tentatives, réessaie dans quelques minutes")
+
     user = storage.verify_user(username.strip(), password)
     if user is None:
+        _login_echecs.setdefault(cle, []).append(time.time())
         raise HTTPException(401, "Identifiant ou mot de passe incorrect")
+
+    _login_echecs.pop(cle, None)
     request.session["user_id"] = user["id"]
     return {"username": user["username"]}
 

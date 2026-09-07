@@ -11,6 +11,7 @@ Sources :
 - Météo : Open-Meteo (archive historique + normales saisonnières pour le futur, mondiale)
 """
 
+import time
 from functools import lru_cache
 
 import holidays
@@ -18,6 +19,29 @@ import pandas as pd
 import requests
 
 ALSACE_MOSELLE_DEPCODES = {"57", "67", "68"}
+
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
+
+def _get_json(url: str, params: dict, timeout: int = 15, tentatives: int = 3) -> requests.Response:
+    """GET avec quelques essais espacés sur incident passager (réseau coupé,
+    429 de quota, 5xx). Ces API sont interrogées en boucle sur beaucoup de
+    lieux — le banc d'essai météo en enchaîne 108 — et un seul incident au
+    milieu faisait tout échouer en perdant le cache déjà constitué.
+    """
+    for essai in range(tentatives):
+        dernier = essai == tentatives - 1
+        try:
+            resp = requests.get(url, params=params, timeout=timeout)
+            if resp.status_code in _RETRYABLE_STATUS and not dernier:
+                time.sleep(2**essai)
+                continue
+            resp.raise_for_status()
+            return resp
+        except requests.RequestException:
+            if dernier:
+                raise
+            time.sleep(2**essai)
 
 # Centroïdes des 30 académies (source : data.education.gouv.fr,
 # dataset fr-en-contour-academies-2020), pour rattacher une position à
@@ -64,12 +88,11 @@ def geocode(query: str) -> dict:
     """Géocode une ville ou un code postal, n'importe où dans le monde, via
     l'API de géocodage Open-Meteo.
     """
-    resp = requests.get(
+    resp = _get_json(
         "https://geocoding-api.open-meteo.com/v1/search",
-        params={"name": query, "count": 1, "language": "fr", "format": "json"},
+        {"name": query, "count": 1, "language": "fr", "format": "json"},
         timeout=10,
     )
-    resp.raise_for_status()
     results = resp.json().get("results", [])
     if not results:
         raise ValueError(f"Localisation introuvable : {query}")
@@ -100,12 +123,21 @@ def nearest_academie(lat: float, lon: float) -> str:
 
 @lru_cache(maxsize=64)
 def _vacation_periods(academie: str) -> tuple:
-    resp = requests.get(
+    # rows large et tri décroissant : à ~6 périodes ajoutées par an, la borne
+    # de 100 aurait fini par tronquer silencieusement (68 enregistrements
+    # aujourd'hui pour Paris), et le tri garantit que ce sont les plus
+    # anciennes qui sauteraient le jour où ça arriverait, pas des périodes
+    # récentes prises au hasard.
+    resp = _get_json(
         "https://data.education.gouv.fr/api/records/1.0/search/",
-        params={"dataset": "fr-en-calendrier-scolaire", "refine.location": academie, "rows": 100},
+        {
+            "dataset": "fr-en-calendrier-scolaire",
+            "refine.location": academie,
+            "rows": 1000,
+            "sort": "-end_date",
+        },
         timeout=10,
     )
-    resp.raise_for_status()
     periods = []
     for record in resp.json().get("records", []):
         fields = record["fields"]
@@ -149,9 +181,9 @@ def holiday_flags(country_code: str, depcode: str, dates: pd.DatetimeIndex) -> p
 
 
 def _open_meteo_archive(lat: float, lon: float, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
-    resp = requests.get(
+    resp = _get_json(
         "https://archive-api.open-meteo.com/v1/archive",
-        params={
+        {
             "latitude": lat,
             "longitude": lon,
             "start_date": start.date().isoformat(),
@@ -167,7 +199,6 @@ def _open_meteo_archive(lat: float, lon: float, start: pd.Timestamp, end: pd.Tim
         },
         timeout=15,
     )
-    resp.raise_for_status()
     daily = resp.json()["daily"]
     return pd.DataFrame(
         {"temp_max": daily["temperature_2m_max"], "precipitation": daily["precipitation_sum"]},

@@ -635,3 +635,84 @@ def test_modele_inconnu_rejete_immediatement():
     )
     assert resp.status_code == 400
     assert "nawak" in resp.text
+
+
+# --- Exogènes : robustesse réseau -------------------------------------
+
+def test_get_json_retente_sur_429(monkeypatch):
+    """Un seul 429 au milieu d'une boucle sur beaucoup de lieux faisait tout
+    échouer et perdait le cache déjà constitué."""
+    import exogenous
+
+    class FausseReponse:
+        def __init__(self, code):
+            self.status_code = code
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code}")
+
+    appels = []
+
+    def faux_get(url, params, timeout):
+        appels.append(url)
+        return FausseReponse(429 if len(appels) == 1 else 200)
+
+    monkeypatch.setattr(exogenous.requests, "get", faux_get)
+    monkeypatch.setattr(exogenous.time, "sleep", lambda _: None)
+
+    resp = exogenous._get_json("http://exemple", {})
+    assert resp.status_code == 200
+    assert len(appels) == 2  # le premier essai a été retenté
+
+
+def test_get_json_abandonne_apres_les_tentatives(monkeypatch):
+    import exogenous
+
+    monkeypatch.setattr(exogenous.time, "sleep", lambda _: None)
+    monkeypatch.setattr(
+        exogenous.requests, "get",
+        lambda url, params, timeout: (_ for _ in ()).throw(exogenous.requests.RequestException("réseau coupé")),
+    )
+    with pytest.raises(exogenous.requests.RequestException):
+        exogenous._get_json("http://exemple", {})
+
+
+# --- Connexion : anti-bruteforce et secret de session ------------------
+
+def test_login_bloque_apres_trop_d_echecs():
+    api._login_echecs.clear()
+    anonyme = TestClient(app)
+    api.storage.create_user("cible", "le-bon-mot-de-passe")
+
+    codes = [
+        anonyme.post("/api/login", data={"username": "cible", "password": "faux"}).status_code
+        for _ in range(api.LOGIN_MAX_ECHECS + 2)
+    ]
+    assert codes[0] == 401
+    assert codes[-1] == 429  # plus même la peine de vérifier le mot de passe
+
+    # et le blocage tient même avec le bon mot de passe, tant que la fenêtre court
+    assert anonyme.post(
+        "/api/login", data={"username": "cible", "password": "le-bon-mot-de-passe"}
+    ).status_code == 429
+    api._login_echecs.clear()
+
+
+def test_login_reussi_remet_le_compteur_a_zero():
+    api._login_echecs.clear()
+    anonyme = TestClient(app)
+    api.storage.create_user("bob", "secret")
+
+    anonyme.post("/api/login", data={"username": "bob", "password": "faux"})
+    assert api._login_echecs
+    assert anonyme.post("/api/login", data={"username": "bob", "password": "secret"}).status_code == 200
+    assert not api._login_echecs
+
+
+def test_secret_de_session_non_lisible_par_les_autres():
+    import storage
+
+    storage.session_secret()
+    mode = (storage.DB_PATH.parent / ".session_secret").stat().st_mode & 0o777
+    assert mode == 0o600, oct(mode)
