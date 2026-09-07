@@ -361,10 +361,19 @@ function simpleDataset(label, data, color) {
   };
 }
 
+// Ces deux listes se chargent au démarrage : sans garde sur res.ok, une
+// réponse d'erreur faisait échouer .map() ("stores.map is not a function")
+// en rejet non géré — la liste restait vide sans explication, et pour les
+// points de vente updateAnalyzeButtonState() n'était jamais appelé, laissant
+// le bouton "Analyser" grisé sans raison visible.
 async function loadStores() {
   const res = await fetch("/api/stores");
-  const stores = await res.json();
   const select = el("store-select");
+  if (!res.ok) {
+    select.innerHTML = `<option value="">Liste indisponible</option>`;
+    return;
+  }
+  const stores = await res.json();
   select.innerHTML = stores
     .map((s) => `<option value="${s.id}">${s.id} (${s.n_days} jours)</option>`)
     .join("");
@@ -372,8 +381,13 @@ async function loadStores() {
 
 async function loadPoints() {
   const res = await fetch("/api/points");
-  const points = await res.json();
   const select = el("point-select");
+  if (!res.ok) {
+    select.innerHTML = `<option value="">Liste indisponible</option>`;
+    updateAnalyzeButtonState();
+    return;
+  }
+  const points = await res.json();
   select.innerHTML = points.length
     ? points.map((p) => `<option value="${p.id}">${escapeHtml(p.name)} (${p.n_days} jours)</option>`).join("")
     : `<option value="">Aucun point de vente enregistré</option>`;
@@ -1011,12 +1025,18 @@ async function onAnalyze() {
   resetForecastAndBacktest(); // une nouvelle source rend l'ancienne prévision/comparaison obsolète
   try {
     status.textContent = "Analyse en cours...";
-    currentSource = currentSourceFromUI();
-    const data = await fetchAnalysis(currentSource);
+    // currentSource n'est promu qu'après succès : affecté avant l'appel, il
+    // laissait — en cas d'échec — les prévisions suivantes partir sur une
+    // source jamais analysée, sous les graphes de la précédente restés
+    // affichés faute de masquer #results ici.
+    const source = currentSourceFromUI();
+    const data = await fetchAnalysis(source);
+    currentSource = source;
     renderAnalysis(data);
     status.textContent = "";
   } catch (err) {
     status.textContent = err.message;
+    el("results").hidden = true;
     return;
   }
   onBacktest(); // section 4 : lancée automatiquement, pas d'action manuelle requise
@@ -1313,7 +1333,18 @@ async function onDeletePoint() {
   const label = select.options[select.selectedIndex]?.textContent || "ce point de vente";
   if (!confirm(`Supprimer ${label} ? Cette action est irréversible.`)) return;
 
-  await fetch(`/api/points/${pointId}`, { method: "DELETE" });
+  // Sans vérifier res.ok, un échec (404, 500, session expirée) se soldait
+  // par un rechargement de la liste : le point de vente réapparaissait et
+  // l'utilisateur pouvait croire la suppression faite.
+  const status = el("save-point-status");
+  const res = await fetch(`/api/points/${pointId}`, { method: "DELETE" });
+  if (!res.ok) {
+    status.textContent = "La suppression a échoué.";
+    status.className = "status status--error";
+    return;
+  }
+  status.textContent = "";
+  status.className = "status";
   await loadPoints();
 }
 
