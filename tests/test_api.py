@@ -53,6 +53,22 @@ def test_parse_csv_rejects_short_history():
         parse_csv(make_csv_bytes(rows), "date", "value")
 
 
+def test_parse_csv_reads_slash_dates_day_first():
+    # format JJ/MM/AAAA (restaurateurs FR) : "03/04/2024" doit être lu comme
+    # le 3 avril, pas le 4 mars (piège du MM/JJ par défaut de pandas).
+    rows = [(f"{d:02d}/04/2024", 10 + d) for d in range(1, 22)]  # 21 jours
+    df = parse_csv(make_csv_bytes(rows), "date", "value")
+    assert pd.Timestamp("2024-04-03") in df.index
+    assert pd.Timestamp("2024-03-04") not in df.index
+    assert len(df) == 21
+
+
+def test_parse_csv_rejects_unreadable_dates():
+    rows = [(f"pas-une-date-{d}", 10) for d in range(1, 22)]
+    with pytest.raises(HTTPException):
+        parse_csv(make_csv_bytes(rows), "date", "value")
+
+
 def make_multi_store_csv_bytes(store_rows):
     lines = ["store,date,value"] + [f"{s},{d},{v}" for s, d, v in store_rows]
     return "\n".join(lines).encode()

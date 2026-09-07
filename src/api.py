@@ -465,6 +465,21 @@ def _read_csv_flexible(content: bytes) -> pd.DataFrame:
     return pd.read_csv(io.BytesIO(content), sep=None, engine="python")
 
 
+def _parse_dates(raw: pd.Series) -> pd.Series:
+    """Parse une colonne de dates. Essaie d'abord le format ISO strict
+    (AAAA-MM-JJ, utilisé par tous les jeux de référence et les exports
+    machine) ; si au moins une valeur ne correspond pas, retombe sur un
+    parsing tolérant en jour-en-premier (JJ/MM/AAAA) — convention des
+    restaurateurs visés (France). Sans ce fallback explicite, pandas devine
+    MM/JJ par défaut et lit silencieusement un jour <= 12 comme le mauvais
+    mois (03/04/2024 -> 4 mars au lieu du 3 avril), sans la moindre erreur.
+    """
+    iso = pd.to_datetime(raw, format="%Y-%m-%d", errors="coerce")
+    if iso.notna().all():
+        return iso
+    return pd.to_datetime(raw, errors="coerce", dayfirst=True)
+
+
 def _daily_series(
     rows: pd.DataFrame, date_col: str, value_col: str, extra_cols: list[str] | None = None
 ) -> pd.DataFrame:
@@ -475,7 +490,9 @@ def _daily_series(
     extra_cols = extra_cols or []
     s = rows[[date_col, value_col, *extra_cols]].dropna(subset=[date_col, value_col]).copy()
     s = s.rename(columns={date_col: "visit_date", value_col: "visitors"})
-    s["visit_date"] = pd.to_datetime(s["visit_date"], errors="coerce")
+    s["visit_date"] = _parse_dates(s["visit_date"])
+    if s["visit_date"].isna().all():
+        raise HTTPException(400, f"Colonne '{date_col}' : aucune date reconnue (formats acceptés : AAAA-MM-JJ, JJ/MM/AAAA)")
     s = s.dropna(subset=["visit_date"])
     daily = s.groupby("visit_date")[["visitors", *extra_cols]].sum()
 
@@ -567,7 +584,7 @@ def parse_external_exog(
             raise HTTPException(400, "Colonne introuvable dans le fichier exogène")
 
     s = raw[[date_col, *group_cols, *value_cols]].copy()
-    s[date_col] = pd.to_datetime(s[date_col], errors="coerce")
+    s[date_col] = _parse_dates(s[date_col])
     s = s.dropna(subset=[date_col])
     if s.empty:
         raise HTTPException(400, "Fichier exogène vide ou dates illisibles")
@@ -857,7 +874,7 @@ async def api_upload_exog_validate(
     main_raw = _read_csv_flexible(await file.read())
     if date_col not in main_raw.columns:
         raise HTTPException(400, "Colonne date introuvable dans le fichier principal")
-    main_dates = pd.to_datetime(main_raw[date_col], errors="coerce").dropna()
+    main_dates = _parse_dates(main_raw[date_col]).dropna()
     if main_dates.empty:
         raise HTTPException(400, "Dates illisibles dans le fichier principal")
     main_first_date, main_last_date = main_dates.min(), main_dates.max()
