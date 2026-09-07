@@ -68,7 +68,11 @@ def load_raw() -> dict[str, pd.DataFrame]:
     stores = pd.read_csv(f"{DATA_DIR}/stores.csv")
     oil = pd.read_csv(f"{DATA_DIR}/oil.csv", parse_dates=["date"])
     holidays = pd.read_csv(f"{DATA_DIR}/holidays_events.csv", parse_dates=["date"])
-    return {"train": train, "test": test, "stores": stores, "oil": oil, "holidays": holidays}
+    transactions = pd.read_csv(f"{DATA_DIR}/transactions.csv", parse_dates=["date"])
+    return {
+        "train": train, "test": test, "stores": stores, "oil": oil,
+        "holidays": holidays, "transactions": transactions,
+    }
 
 
 def build_oil_series(oil: pd.DataFrame, dates: pd.DatetimeIndex) -> pd.Series:
@@ -116,6 +120,43 @@ def build_holiday_flags(holidays: pd.DataFrame, stores: pd.DataFrame, all_dates:
     ).astype("int8")
 
     return base[["date", "store_nbr", "is_holiday"]]
+
+
+def build_transactions_features(
+    transactions: pd.DataFrame, all_dates: pd.DatetimeIndex, stores: pd.DataFrame, cutoff: pd.Timestamp
+) -> pd.DataFrame:
+    """Fréquentation quotidienne par magasin (toutes familles confondues) — signal
+    absent de train.csv, qui décompose déjà les ventes par famille. Contrairement à
+    oil.csv, transactions.csv ne couvre jamais l'horizon à prévoir (aucune valeur
+    après `cutoff`, que ce soit le vrai dernier jour connu en soumission ou un jour
+    plus tôt en backtest) : tronqué à `cutoff` avant tout calcul, pour ne jamais
+    laisser un vrai backtest voir des transactions "futures" par rapport à lui.
+
+    Décalé d'un jour (causal) sur l'historique connu ; au-delà de `cutoff`, gelé sur
+    l'état "à cutoff inclus" plutôt que laissé se diluer en NaN au fil de l'horizon.
+    """
+    known = transactions[transactions["date"] <= cutoff]
+    idx = pd.MultiIndex.from_product([stores["store_nbr"], all_dates], names=["store_nbr", "date"])
+    base = idx.to_frame(index=False).merge(known, on=["store_nbr", "date"], how="left")
+    base = base.sort_values(["store_nbr", "date"]).reset_index(drop=True)
+
+    g = base.groupby("store_nbr", observed=True)["transactions"]
+    base["tx_lag_1"] = g.shift(1)
+    base["tx_roll_mean_7"] = g.transform(lambda s: s.shift(1).rolling(7, min_periods=1).mean())
+    base["tx_roll_mean_28"] = g.transform(lambda s: s.shift(1).rolling(28, min_periods=1).mean())
+
+    snap_mask = base["date"] <= cutoff
+    snapshot = base.loc[snap_mask].groupby("store_nbr", observed=True)["transactions"].agg(
+        _tx_last="last",
+        _tx_roll7=lambda s: s.tail(7).mean(),
+        _tx_roll28=lambda s: s.tail(28).mean(),
+    )
+    future_mask = ~snap_mask
+    base.loc[future_mask, "tx_lag_1"] = base.loc[future_mask, "store_nbr"].map(snapshot["_tx_last"])
+    base.loc[future_mask, "tx_roll_mean_7"] = base.loc[future_mask, "store_nbr"].map(snapshot["_tx_roll7"])
+    base.loc[future_mask, "tx_roll_mean_28"] = base.loc[future_mask, "store_nbr"].map(snapshot["_tx_roll28"])
+
+    return base[["store_nbr", "date", "tx_lag_1", "tx_roll_mean_7", "tx_roll_mean_28"]]
 
 
 def add_calendar_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -176,6 +217,27 @@ def add_lag_features(df: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
     promo_grouped = df.groupby(group_cols, observed=True)["onpromotion"]
     df["roll_mean_promo_7"] = promo_grouped.transform(lambda s: s.shift(1).rolling(7, min_periods=1).mean())
 
+    # signal régional : moyenne (log1p) des ventes du jour pour la même famille,
+    # agrégée sur tous les magasins du même cluster (pas seulement ce magasin) —
+    # décalé d'un jour (causal, même principe que roll_mean_*). Utile surtout aux
+    # paires store x famille à faible volume/historique bruité, qui bénéficient
+    # d'un signal plus stable que leur propre historique local.
+    cluster_family_daily = (
+        df.groupby(["cluster", "family", "date"], observed=True)["y"].mean().reset_index()
+        .sort_values(["cluster", "family", "date"])
+    )
+    cf_grouped = cluster_family_daily.groupby(["cluster", "family"], observed=True)["y"]
+    cluster_family_daily["cluster_family_roll_mean_28"] = cf_grouped.transform(
+        lambda s: s.shift(1).rolling(28, min_periods=1).mean()
+    )
+    # `df` peut déjà porter cette colonne (boucle récursive de predict_recursive,
+    # qui réutilise le même `tail` d'une itération à l'autre) : la retirer avant
+    # de fusionner, sinon merge la renomme en _x/_y au lieu de l'écraser.
+    df = df.drop(columns=["cluster_family_roll_mean_28"], errors="ignore").merge(
+        cluster_family_daily[["cluster", "family", "date", "cluster_family_roll_mean_28"]],
+        on=["cluster", "family", "date"], how="left",
+    )
+
     # feature de volume historique : combien de jours d'historique réel
     # (non-NaN) l'entité a déjà accumulés à cette date — distingue une vraie
     # série à faible volume d'une entité tout juste ouverte (cf. journal).
@@ -197,13 +259,20 @@ def _apply_code_maps(df: pd.DataFrame, maps: dict[str, dict]) -> None:
         df[f"{col}__code"] = df[col].map(mapping).fillna(-1).astype("int32")
 
 
-def prepare_entities(train: pd.DataFrame, stores: pd.DataFrame, oil: pd.DataFrame, holidays: pd.DataFrame):
+def prepare_entities(
+    train: pd.DataFrame, stores: pd.DataFrame, oil: pd.DataFrame, holidays: pd.DataFrame, transactions: pd.DataFrame
+):
     """Grille complète (store_nbr x family x date), jointe aux exogènes
     globales — même structure de base pour l'historique et pour l'horizon
-    futur (holiday/oil/calendaire ne dépendent pas de la cible)."""
+    futur (holiday/oil/calendaire ne dépendent pas de la cible). `cutoff` pour
+    transactions.csv (jamais dispo au-delà) = `train["date"].max()` : le dernier
+    jour du `train` reçu par l'appelant, qui est déjà tronqué au bon endroit
+    selon le mode (backtest vs vraie soumission), cf. build_transactions_features.
+    """
     all_dates = pd.date_range(train["date"].min(), train["date"].max() + pd.Timedelta(days=HORIZON), freq="D")
     oil_series = build_oil_series(oil, all_dates)
     holiday_flags = build_holiday_flags(holidays, stores, all_dates)
+    tx_features = build_transactions_features(transactions, all_dates, stores, train["date"].max())
 
     families = sorted(train["family"].unique())
     grid = pd.MultiIndex.from_product(
@@ -211,6 +280,7 @@ def prepare_entities(train: pd.DataFrame, stores: pd.DataFrame, oil: pd.DataFram
     ).to_frame(index=False)
     grid = grid.merge(stores, on="store_nbr", how="left")
     grid = grid.merge(holiday_flags, on=["store_nbr", "date"], how="left")
+    grid = grid.merge(tx_features, on=["store_nbr", "date"], how="left")
     grid["oil_price"] = grid["date"].map(oil_series)
     grid = grid.merge(
         train[["store_nbr", "family", "date", "sales", "onpromotion"]],
@@ -304,7 +374,9 @@ def rmsle(actual: np.ndarray, predicted: np.ndarray) -> float:
 
 
 def run_validate(data: dict[str, pd.DataFrame]) -> None:
-    train, stores, oil, holidays = data["train"], data["stores"], data["oil"], data["holidays"]
+    train, stores, oil, holidays, transactions = (
+        data["train"], data["stores"], data["oil"], data["holidays"], data["transactions"]
+    )
 
     cutoff = train["date"].max() - pd.Timedelta(days=HORIZON - 1)
     fit_train = train[train["date"] < cutoff]
@@ -313,7 +385,7 @@ def run_validate(data: dict[str, pd.DataFrame]) -> None:
     print(f"backtest : entraînement jusqu'au {fit_train['date'].max().date()}, "
           f"validation {truth['date'].min().date()} -> {truth['date'].max().date()} ({HORIZON} jours)")
 
-    grid = prepare_entities(fit_train, stores, oil, holidays)
+    grid = prepare_entities(fit_train, stores, oil, holidays, transactions)
     history = add_lag_features(add_calendar_features(grid[grid["date"] <= fit_train["date"].max()].copy()), ["store_nbr", "family"])
     future = grid[grid["date"] > fit_train["date"].max()].copy()
 
@@ -345,9 +417,11 @@ def run_validate(data: dict[str, pd.DataFrame]) -> None:
 
 
 def run_submit(data: dict[str, pd.DataFrame]) -> None:
-    train, test, stores, oil, holidays = data["train"], data["test"], data["stores"], data["oil"], data["holidays"]
+    train, test, stores, oil, holidays, transactions = (
+        data["train"], data["test"], data["stores"], data["oil"], data["holidays"], data["transactions"]
+    )
 
-    grid = prepare_entities(train, stores, oil, holidays)
+    grid = prepare_entities(train, stores, oil, holidays, transactions)
     history = add_lag_features(add_calendar_features(grid[grid["date"] <= train["date"].max()].copy()), ["store_nbr", "family"])
     future = grid[grid["date"] > train["date"].max()].copy()
 
