@@ -10,11 +10,14 @@ dataset, features (promotions, pétrole, jours fériés Équateur, magasin) et
 hyperparamètres n'ont rien à voir avec le cas d'usage générique de l'app.
 
 Deux modes :
-- `--validate` (défaut) : backtest local sur les 16 derniers jours connus de
+- sans argument (défaut) : backtest local sur les 16 derniers jours connus de
   train.csv (même horizon que le test Kaggle réel) — calcule un RMSLE
   comparable, sans consommer de soumission Kaggle.
 - `--submit` : entraîne sur tout l'historique et écrit le CSV à uploader sur
   Kaggle (horizon officiel 2017-08-16 -> 2017-08-31).
+
+`--family "<NOM>"` restreint les deux modes à une seule famille, pour tester
+un modèle dédié plutôt que le modèle global sur les 33 familles.
 """
 
 import argparse
