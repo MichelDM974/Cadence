@@ -1,3 +1,5 @@
+import time
+
 import pandas as pd
 import pytest
 from fastapi import HTTPException
@@ -592,3 +594,44 @@ def test_upload_trop_volumineux_rejete(monkeypatch):
         data={"store_col": "store"},
     )
     assert resp.status_code == 413
+
+
+# --- Robustesse : purge des jobs, CSV illisible, score infini ----------
+
+def test_purge_des_jobs_expires():
+    """Un job n'était retiré qu'au téléchargement réussi : en erreur, ou si
+    l'utilisateur ferme l'onglet, il restait en mémoire avec son CSV
+    complet pour la vie du process."""
+    api.bulk_jobs.clear()
+    api.bulk_jobs["vieux"] = {"created_at": 0.0, "csv": "x" * 1000}
+    api.bulk_jobs["recent"] = {"created_at": time.time(), "csv": None}
+
+    api.purge_stale_bulk_jobs()
+
+    assert "vieux" not in api.bulk_jobs
+    assert "recent" in api.bulk_jobs
+    api.bulk_jobs.clear()
+
+
+def test_csv_illisible_renvoie_400_et_non_500():
+    resp = client.post(
+        "/api/upload/store-ids",
+        files={"file": ("main.csv", b"\x50\x4b\x03\x04 pas du tout un csv\x00\xff", "text/csv")},
+        data={"store_col": "store"},
+    )
+    assert resp.status_code == 400
+
+
+def test_modele_inconnu_rejete_immediatement():
+    """Le modèle était validé dans le thread : l'appel renvoyait 200 + un
+    job_id, et l'erreur n'apparaissait qu'au premier /progress."""
+    rows = [(f"2024-01-{d:02d}", 10 + d) for d in range(1, 25)]
+    resp = client.post(
+        "/api/upload/forecast/bulk/start",
+        files={"file": ("main.csv", make_multi_store_csv_bytes(
+            [("A", d, v) for d, v in rows] + [("B", d, v) for d, v in rows]
+        ), "text/csv")},
+        data={"date_col": "date", "value_col": "value", "store_col": "store", "model": "nawak"},
+    )
+    assert resp.status_code == 400
+    assert "nawak" in resp.text

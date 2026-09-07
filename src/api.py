@@ -8,8 +8,10 @@ fériés, vacances scolaires, météo). Sert aussi le frontend statique
 import io
 import json
 import logging
+import math
 import os
 import threading
+import time
 import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -102,6 +104,20 @@ def api_logout(request: Request):
 # d'avancement en cours de route).
 bulk_jobs: dict[str, dict] = {}
 
+# Un job n'était retiré qu'au téléchargement réussi de son CSV : un job en
+# erreur, ou dont l'utilisateur a simplement fermé l'onglet, restait en
+# mémoire pour la vie du process — avec le CSV complet (plusieurs Mo sur un
+# gros fichier) et la liste des entités. D'où cette purge par âge, faite au
+# démarrage d'un nouveau job plutôt que par une tâche de fond.
+BULK_JOB_TTL_SECONDS = 3600
+
+
+def purge_stale_bulk_jobs(now=None):
+    now = now if now is not None else time.time()
+    for job_id, job in list(bulk_jobs.items()):
+        if now - job["created_at"] > BULK_JOB_TTL_SECONDS:
+            del bulk_jobs[job_id]
+
 # Un modèle par entité est indépendant des autres : on les ajuste en parallèle
 # sur plusieurs process (l'ajustement SARIMAX/Prophet est CPU-bound, un seul
 # thread Python ne peut utiliser qu'un cœur). Créé à la demande plutôt qu'à
@@ -109,10 +125,18 @@ bulk_jobs: dict[str, dict] = {}
 _bulk_executor: ProcessPoolExecutor | None = None
 
 
+_bulk_executor_lock = threading.Lock()
+
+
 def get_bulk_executor() -> ProcessPoolExecutor:
     global _bulk_executor
+    # Verrou : deux démarrages simultanés pouvaient voir la globale à None
+    # tous les deux, le second écrasant le pool du premier — qui restait
+    # alors orphelin, avec ses os.cpu_count() process jamais arrêtés.
     if _bulk_executor is None:
-        _bulk_executor = ProcessPoolExecutor(max_workers=os.cpu_count() or 4)
+        with _bulk_executor_lock:
+            if _bulk_executor is None:
+                _bulk_executor = ProcessPoolExecutor(max_workers=os.cpu_count() or 4)
     return _bulk_executor
 
 
@@ -447,7 +471,11 @@ def autotune(
             "order": best_order,
             "seasonal_order": best_seasonal,
             "mae_before": None if mae_before is None else round(mae_before, 2),
-            "mae_after": round(best_mae, 2),
+            # best_mae vaut l'infini quand aucun ajustement n'a abouti (série
+            # constante, que du zéro...) : sérialisé tel quel, ça donne un
+            # "Infinity" que JSON.parse refuse côté client. None dit la même
+            # chose — score inconnu — et se traite déjà comme mae_before.
+            "mae_after": round(best_mae, 2) if math.isfinite(best_mae) else None,
         }
 
     if "prophet" in models:
@@ -529,7 +557,14 @@ def _read_csv_flexible(content: bytes) -> pd.DataFrame:
             return df
     except Exception:
         pass
-    return pd.read_csv(io.BytesIO(content), sep=None, engine="python")
+    try:
+        return pd.read_csv(io.BytesIO(content), sep=None, engine="python")
+    except Exception:
+        # Seconde tentative laissée nue jusqu'ici : un .xlsx renommé .csv ou
+        # un fichier à nombre de colonnes variable remontait une ParserError
+        # brute (500 + trace), là où toutes les autres erreurs d'import
+        # renvoient un message lisible.
+        raise HTTPException(400, "Fichier illisible : vérifie qu'il s'agit bien d'un CSV")
 
 
 def _parse_dates(raw: pd.Series) -> pd.Series:
@@ -1405,8 +1440,21 @@ async def api_upload_forecast_bulk_start(
     if not group_cols:
         raise HTTPException(400, "Aucune dimension à parcourir pour la prévision groupée")
 
+    if model not in BULK_MODELS:
+        raise HTTPException(400, f"Modèle inconnu : {model}")
+
+    # Pool créé ici, dans le thread principal, plutôt qu'à la demande depuis
+    # le thread de travail : forker alors qu'uvicorn, cmdstan et libgomp ont
+    # déjà lancé leurs threads peut laisser un worker figé sur un verrou
+    # copié, et le job resterait "running" indéfiniment. Reste paresseux (pas
+    # de fork à l'import, cf. get_bulk_executor) et inutile pour lightgbm,
+    # qui entraîne un modèle global sans passer par le pool.
+    if model != "lightgbm":
+        get_bulk_executor()
+
     combos = group_combinations(raw, group_cols)
     job_id = uuid.uuid4().hex
+    purge_stale_bulk_jobs()
     bulk_jobs[job_id] = {
         "status": "running",
         "processed": 0,
@@ -1415,6 +1463,7 @@ async def api_upload_forecast_bulk_start(
         "skipped": 0,
         "csv": None,
         "error": None,
+        "created_at": time.time(),
     }
 
     thread = threading.Thread(
@@ -1454,6 +1503,8 @@ def api_upload_forecast_bulk_download(job_id: str):
     if job["status"] == "running":
         raise HTTPException(409, "Prévision encore en cours")
     if job["status"] == "error":
+        # libéré ici aussi : sans ça un job en erreur n'était jamais retiré
+        del bulk_jobs[job_id]
         raise HTTPException(400, job["error"])
 
     csv_text = job["csv"]
