@@ -443,9 +443,18 @@ def run_submit(data: dict[str, pd.DataFrame]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--submit", action="store_true", help="entraîne sur tout l'historique et écrit le CSV Kaggle")
+    parser.add_argument(
+        "--family", default=None,
+        help="restreint train/test à une seule famille (ex. 'SCHOOL AND OFFICE SUPPLIES') — "
+             "pour tester un modèle dédié plutôt que le modèle global sur les 33 familles",
+    )
     args = parser.parse_args()
 
     data = load_raw()
+    if args.family:
+        data["train"] = data["train"][data["train"]["family"] == args.family].copy()
+        data["test"] = data["test"][data["test"]["family"] == args.family].copy()
+
     if args.submit:
         run_submit(data)
     else:
