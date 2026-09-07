@@ -120,39 +120,8 @@ function setupPresetManagers() {
   });
 }
 
-// Petit bouton ⚙ sur l'encadré de formule : révèle le lexique des symboles,
-// masqué par défaut pour ne pas surcharger l'encadré.
-function setupFormulaLegendToggles() {
-  document.querySelectorAll(".model-formula-info-btn").forEach((btn) => {
-    const legend = document.getElementById(btn.getAttribute("aria-controls"));
-    btn.addEventListener("click", () => {
-      const expanded = legend.hidden; // état après bascule
-      legend.hidden = !expanded;
-      btn.setAttribute("aria-expanded", String(expanded));
-      btn.classList.toggle("active", expanded);
-    });
-  });
-}
-
-// Améliore les équations principales avec un vrai rendu LaTeX (KaTeX, chargé
-// en CDN dans models.html) quand la lib a pu charger. Le HTML de secours
-// (sub/sup) déjà présent dans la page reste affiché tel quel sinon — ex.
-// le navigateur intégré à VS Code bloque ce script CDN (comme window.prompt()).
-function setupFormulaRendering() {
-  if (typeof katex === "undefined") return;
-  document.querySelectorAll(".model-formula-eq[data-latex]").forEach((el) => {
-    try {
-      katex.render(el.dataset.latex, el, { displayMode: true, throwOnError: false });
-    } catch {
-      // le HTML de secours reste affiché
-    }
-  });
-}
-
 ensureDefaultPresets();
 setupSettingsMenu();
 setupModelParamsForm();
 setupPresetManagers();
 setupCollapsibleTabs();
-setupFormulaLegendToggles();
-setupFormulaRendering();

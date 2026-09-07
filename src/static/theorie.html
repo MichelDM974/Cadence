@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cadence — Théorie</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
+</head>
+<body>
+  <header>
+    <div class="header-title">
+      <h1>Comment fonctionnent les modèles</h1>
+      <p class="tagline">De ARIMA à SARIMAX, étape par étape.</p>
+    </div>
+    <div class="header-actions">
+      <a href="index.html" class="back-btn">← Retour à l'analyse</a>
+      <div class="account-menu">
+        <button type="button" id="account-menu-btn" title="Paramètres" aria-label="Paramètres">⚙</button>
+        <div id="settings-popup" class="settings-popup" hidden>
+          <p class="account-user">Connecté : <strong id="account-username"></strong></p>
+          <button type="button" id="logout-btn" class="account-dropdown-item">Se déconnecter</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel model-params-page">
+      <p class="hint">
+        SARIMAX, le modèle de référence de Cadence pour l'analyse d'un point de vente, se construit en
+        trois étapes : ARIMA pose le socle (tendance + mémoire courte), SARIMA y ajoute la saisonnalité,
+        SARIMAX y ajoute enfin les variables externes (météo, jours fériés...). Chaque bloc reprend le
+        précédent et lui ajoute une seule idée nouvelle — les graphiques ci-dessous sont des exemples
+        illustratifs (données synthétiques), pas des prévisions réelles.
+      </p>
+
+      <div class="model-params-block">
+        <h3>1. ARIMA — la base</h3>
+        <div class="model-formula">
+          <p class="model-formula-intro">
+            On note (y<sub>t</sub>)<sub>t=1..n</sub> la série temporelle observée — par exemple le nombre
+            de couverts servis par un restaurant, ou les ventes d'un magasin, chaque jour t. ARIMA prévoit
+            y<sub>t</sub> à partir de son propre passé, sans rien connaître d'autre.
+          </p>
+
+          <div class="model-formula-step">
+            <p class="model-formula-step-label">Différenciation (I) — retirer la tendance</p>
+            <p class="model-formula-eq" data-latex="w_t = (1-B)^d \, y_t">w<sub>t</sub> = (1&minus;B)<sup>d</sup> · y<sub>t</sub></p>
+            <p class="model-formula-step-desc">
+              B, l'opérateur de retard, recule d'un jour (B·y<sub>t</sub> = y<sub>t&minus;1</sub>) : donc
+              (1&minus;B)y<sub>t</sub> = y<sub>t</sub> &minus; y<sub>t&minus;1</sub>, l'écart avec la veille —
+              c'est ça, une différenciation. Répétée d fois, elle élimine la tendance générale (une série
+              qui monte ou descend dans le temps) et laisse une série stationnaire w<sub>t</sub> — plus facile
+              à modéliser, c'est elle que traitent les deux blocs suivants.
+            </p>
+          </div>
+          <div class="model-formula-step">
+            <p class="model-formula-step-label">Partie autorégressive (AR) — les jours précédents</p>
+            <p class="model-formula-eq" data-latex="AR_t = \varphi_p(B) \, w_t">AR<sub>t</sub> = φ<sub>p</sub>(B) · w<sub>t</sub></p>
+            <p class="model-formula-step-desc">
+              AR<sub>t</sub> est la valeur d'aujourd'hui, estimée à partir de celle des p derniers jours
+              (hier, avant-hier...), chacun pondéré par un coefficient φ<sub>p</sub> — idée simple : un
+              restaurant plein hier a de bonnes chances de l'être encore aujourd'hui.
+            </p>
+          </div>
+          <div class="model-formula-step">
+            <p class="model-formula-step-label">Partie moyenne mobile (MA) — les erreurs précédentes</p>
+            <p class="model-formula-eq" data-latex="MA_t = \theta_q(B) \, \varepsilon_t">MA<sub>t</sub> = θ<sub>q</sub>(B) · ε<sub>t</sub></p>
+            <p class="model-formula-step-desc">
+              Ce que le bloc AR n'a pas capté (ε<sub>t</sub>, le bruit) est corrigé en tenant compte des q
+              dernières erreurs de prévision, chacune pondérée par un coefficient θ<sub>q</sub> — si le
+              modèle a nettement sous-estimé hier (ex. un jour de bonus imprévu), il corrige un peu le tir
+              pour aujourd'hui.
+            </p>
+          </div>
+
+          <div class="theorie-chart-box">
+            <p class="model-formula-step-label">Même série, avant et après différenciation (d = 1)</p>
+            <div class="decomposition-grid">
+              <div><p class="hint">Série brute (y<sub>t</sub>) — tendance visible</p><canvas id="theorie-arima-raw" height="120"></canvas></div>
+              <div><p class="hint">Série différenciée (w<sub>t</sub>) — stationnaire</p><canvas id="theorie-arima-diff" height="120"></canvas></div>
+            </div>
+          </div>
+
+          <p class="model-formula-summary">
+            Le modèle pose <strong>AR<sub>t</sub> = MA<sub>t</sub></strong> à chaque instant t : cette
+            équation relie la série à son propre passé (AR) et à ses erreurs passées (MA). Cadence ne la
+            résout pas à la main — il cherche automatiquement (auto-tuning) les valeurs de p, d, q et les
+            coefficients associés qui collent le mieux aux données observées. Pour prévoir un jour futur,
+            on applique cette même équation en supposant qu'aucune erreur nouvelle ne survient
+            (ε<sub>t</sub> = 0 en moyenne) — d'où l'incertitude qui grandit avec l'horizon de prévision.
+            ARIMA(p, d, q) suffit pour une série sans motif qui se répète (pas de saisonnalité) et sans
+            facteur externe connu.
+          </p>
+        </div>
+      </div>
+
+      <div class="model-params-block">
+        <h3>2. SARIMA — ajouter la saisonnalité</h3>
+        <div class="model-formula">
+          <p class="model-formula-intro">
+            Beaucoup de séries ont un motif qui se répète — le même jour de la semaine, par exemple. SARIMA
+            reprend exactement la construction d'ARIMA et ajoute, à chaque bloc, un second réglage qui ne
+            regarde plus la veille mais le même jour du cycle précédent : la période s (s = 7 pour une
+            saisonnalité hebdomadaire).
+          </p>
+
+          <div class="model-formula-step">
+            <p class="model-formula-step-label">Différenciation étendue</p>
+            <p class="model-formula-eq" data-latex="w_t = (1-B)^d (1-B^s)^D \, y_t">w<sub>t</sub> = (1&minus;B)<sup>d</sup> (1&minus;B<sup>s</sup>)<sup>D</sup> · y<sub>t</sub></p>
+            <p class="model-formula-step-desc">
+              (1&minus;B<sup>s</sup>)y<sub>t</sub> = y<sub>t</sub> &minus; y<sub>t&minus;s</sub>, l'écart avec
+              le même jour du cycle précédent. Répétée D fois, en plus de la différenciation classique
+              (d fois), elle élimine aussi le motif saisonnier.
+            </p>
+          </div>
+          <div class="model-formula-step">
+            <p class="model-formula-step-label">Partie autorégressive étendue</p>
+            <p class="model-formula-eq" data-latex="AR_t = \varphi_p(B) \, \Phi_P(B^s) \, w_t">AR<sub>t</sub> = φ<sub>p</sub>(B) · Φ<sub>P</sub>(B<sup>s</sup>) · w<sub>t</sub></p>
+            <p class="model-formula-step-desc">
+              À la mémoire des p derniers jours s'ajoute celle des mêmes jours lors des P cycles précédents
+              (ex. le même jour la semaine dernière), pondérée par un coefficient Φ<sub>P</sub> — deux
+              échelles de mémoire combinées.
+            </p>
+          </div>
+          <div class="model-formula-step">
+            <p class="model-formula-step-label">Partie moyenne mobile étendue</p>
+            <p class="model-formula-eq" data-latex="MA_t = \theta_q(B) \, \Theta_Q(B^s) \, \varepsilon_t">MA<sub>t</sub> = θ<sub>q</sub>(B) · Θ<sub>Q</sub>(B<sup>s</sup>) · ε<sub>t</sub></p>
+            <p class="model-formula-step-desc">
+              Même logique pour les erreurs : celles du même jour lors des Q cycles précédents comptent
+              aussi dans la correction, pondérées par un coefficient Θ<sub>Q</sub>.
+            </p>
+          </div>
+
+          <div class="theorie-chart-box">
+            <p class="model-formula-step-label">Série avec un motif qui se répète chaque semaine (s = 7)</p>
+            <canvas id="theorie-sarima-chart" height="130"></canvas>
+          </div>
+
+          <p class="model-formula-summary">
+            Toujours <strong>AR<sub>t</sub> = MA<sub>t</sub></strong>, avec cette fois deux jeux de
+            paramètres trouvés automatiquement : (p, d, q) pour la mémoire courte, (P, D, Q, s) pour le
+            cycle saisonnier. SARIMA(p, d, q)(P, D, Q, s) capture donc tendance et saisonnalité, toujours
+            sans facteur externe.
+          </p>
+        </div>
+      </div>
+
+      <div class="model-params-block">
+        <h3>3. SARIMAX — ajouter les exogènes</h3>
+        <div class="model-formula">
+          <p class="model-formula-intro">
+            Dernière étape : intégrer l'effet de variables extérieures à la série elle-même — météo, jour
+            férié, promotion... SARIMAX reprend SARIMA à l'identique et ajoute un seul terme, dans la partie
+            moyenne mobile.
+          </p>
+
+          <div class="model-formula-step">
+            <p class="model-formula-step-label">Partie moyenne mobile + exogènes</p>
+            <p class="model-formula-eq" data-latex="MA_t = \theta_q(B) \, \Theta_Q(B^s) \, \varepsilon_t + \beta \, X_t">MA<sub>t</sub> = θ<sub>q</sub>(B) · Θ<sub>Q</sub>(B<sup>s</sup>) · ε<sub>t</sub> + β · X<sub>t</sub></p>
+            <p class="model-formula-step-desc">
+              X<sub>t</sub>, la variable exogène (météo, jour férié, promotion...), est ajoutée avec un
+              coefficient β qui mesure son effet appris sur la prévision, en plus de tout ce que la série
+              explique déjà d'elle-même.
+            </p>
+          </div>
+
+          <div class="theorie-chart-box">
+            <p class="model-formula-step-label">Effet d'une variable exogène (ex. jour de promotion)</p>
+            <canvas id="theorie-sarimax-chart" height="130"></canvas>
+          </div>
+
+          <p class="model-formula-summary">
+            <strong>AR<sub>t</sub> = MA<sub>t</sub></strong>, avec ce terme en plus : c'est cette équation
+            complète que Cadence ajuste automatiquement pour trouver les meilleurs paramètres. Point de
+            vigilance : contrairement à y<sub>t</sub>, les valeurs futures de X<sub>t</sub> doivent être
+            connues ou estimées pour produire une prévision — une météo prévue, un jour férié déjà au
+            calendrier. Sans ça, l'exogène aide à mieux comprendre le passé mais pas à prévoir l'avenir.
+            SARIMAX est le modèle de référence utilisé pour l'analyse d'un point de vente — réglable dans
+            la <a href="models.html">page Modèles</a>.
+          </p>
+        </div>
+      </div>
+
+      <p class="hint">
+        Concrètement, pour un restaurant : ARIMA capte qu'un mardi ressemble à hier et à toute la semaine
+        passée ; SARIMA sait en plus qu'un mardi est structurellement plus calme qu'un vendredi ; SARIMAX
+        ajoute l'effet d'un jour férié ou d'une alerte météo connus à l'avance. Chaque bloc affine la
+        prévision du précédent, sans le remplacer.
+      </p>
+
+      <p class="hint">
+        Prophet et LightGBM reposent sur des logiques différentes (décomposition de tendance/saisonnalité
+        pour Prophet, apprentissage par arbres de décision pour LightGBM) — leur explication viendra dans un
+        prochain ajout à cette page.
+      </p>
+    </section>
+  </main>
+
+  <script src="auth-guard.js"></script>
+  <script src="menu.js"></script>
+  <script src="theorie.js"></script>
+</body>
+</html>
