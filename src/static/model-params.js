@@ -180,9 +180,7 @@ function readModelParamsFromInputs() {
   return params;
 }
 
-// Payload envoyé au serveur : reconstruit order/seasonal_order pour SARIMAX
-// à partir des 7 champs séparés (p,d,q,P,D,Q,s) affichés dans le formulaire.
-// Onglets repliables générique (ex. "Ruptures de rythme" sur index.html,
+// Onglets repliables génériques (ex. "Ruptures de rythme" sur index.html,
 // "Configurations" par modèle sur models.html) : un bouton `.collapsible-tab`
 // avec `aria-controls` pointant vers le panneau à révéler.
 function setupCollapsibleTabs() {
@@ -197,6 +195,8 @@ function setupCollapsibleTabs() {
   });
 }
 
+// Payload envoyé au serveur : reconstruit order/seasonal_order pour SARIMAX
+// à partir des 7 champs séparés (p,d,q,P,D,Q,s) affichés dans le formulaire.
 function modelParamsPayload() {
   const p = loadModelParams();
   return {

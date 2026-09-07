@@ -1,7 +1,9 @@
-// Menu "Mon compte" (⚙) — ouverture/fermeture, partagé entre index.html
-// (dropdown avec "Modèles") et models.html (popup vide pour l'instant, prêt
-// à accueillir un futur réglage). Dépend de el(), défini dans
-// model-params.js, chargé avant ce fichier.
+// Menu "Mon compte" (⚙) — ouverture/fermeture, partagé par index.html
+// (dropdown), models.html et theorie.html (popup). Dépend de el(), fourni
+// par model-params.js sur index/models et par theorie.js sur theorie.
+// L'ordre de chargement varie (menu.js passe avant theorie.js) : sans
+// importance, el() n'étant résolu qu'au moment de l'appel, toujours après
+// que la page a fini de charger ses scripts.
 
 function setupPopupToggle(triggerEl, scopeSelector, isOpen, open, close) {
   triggerEl.addEventListener("click", (e) => {

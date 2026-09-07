@@ -560,8 +560,7 @@ button + button {
   font-size: 0.9rem;
 }
 
-#location-suggestions li:hover,
-#location-suggestions li.active {
+#location-suggestions li:hover {
   background: var(--accent-soft);
 }
 
@@ -997,17 +996,6 @@ th, td {
 .auth-card button {
   width: 100%;
   margin-top: 4px;
-}
-
-.auth-switch {
-  margin-top: 16px;
-  font-size: 0.85rem;
-  color: var(--muted);
-  text-align: center;
-}
-
-.auth-switch a {
-  color: var(--accent);
 }
 
 .account-user {

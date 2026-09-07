@@ -13,9 +13,9 @@ function cssVar(name) {
 // le navigateur intégré à VS Code bloque ce script CDN (comme window.prompt()).
 function setupFormulaRendering() {
   if (typeof katex === "undefined") return;
-  document.querySelectorAll(".model-formula-eq[data-latex]").forEach((el) => {
+  document.querySelectorAll(".model-formula-eq[data-latex]").forEach((noeud) => {
     try {
-      katex.render(el.dataset.latex, el, { displayMode: true, throwOnError: false });
+      katex.render(noeud.dataset.latex, noeud, { displayMode: true, throwOnError: false });
     } catch {
       // le HTML de secours reste affiché
     }

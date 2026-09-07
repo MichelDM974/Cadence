@@ -270,7 +270,7 @@ function cssVar(name) {
 }
 
 // Séries masquées par l'utilisateur via la légende, par canvas et par label —
-// survit à un rerender (ex. bascule de thème, qui redessine tous les graphes)
+// survit à un rerender (changement d'horizon, de modèle ou de préréglage)
 // puisque `renderLineChart` reconstruit sans ça un Chart.js à zéro à chaque fois.
 const hiddenChartSeries = {};
 
