@@ -716,3 +716,49 @@ def test_secret_de_session_non_lisible_par_les_autres():
     storage.session_secret()
     mode = (storage.DB_PATH.parent / ".session_secret").stat().st_mode & 0o777
     assert mode == 0o600, oct(mode)
+
+
+# --- Endpoints d'upload : couverture HTTP ------------------------------
+# Ces trois routes n'avaient aucun test HTTP alors qu'elles partagent 34
+# lignes identiques (préparation du CSV et des exogènes) : de quoi laisser
+# passer une régression sur l'une sans que rien ne le signale.
+
+def _csv_deux_saisons():
+    """~20 semaines : le backtest exige au moins 97 jours pour un horizon
+    de 7 (train + fenêtre de test), l'autotune davantage encore."""
+    base = pd.date_range("2024-01-01", periods=140, freq="D")
+    return make_csv_bytes([(d.date().isoformat(), 100 + 20 * (d.dayofweek >= 5)) for d in base])
+
+
+def test_upload_forecast_renvoie_une_prevision():
+    resp = client.post(
+        "/api/upload/forecast",
+        files={"file": ("main.csv", _csv_deux_saisons(), "text/csv")},
+        data={"date_col": "date", "value_col": "value", "horizon": "7", "model": "sarimax"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body["prevision"]) == 7
+    assert len(body["dates"]) == 7
+
+
+def test_upload_backtest_compare_a_la_baseline():
+    resp = client.post(
+        "/api/upload/backtest",
+        files={"file": ("main.csv", _csv_deux_saisons(), "text/csv")},
+        data={"date_col": "date", "value_col": "value", "horizon": "7"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "naive" in body["mae"]
+    assert len(body["actual"]) == 7
+
+
+def test_upload_autotune_renvoie_une_config():
+    resp = client.post(
+        "/api/upload/autotune",
+        files={"file": ("main.csv", _csv_deux_saisons(), "text/csv")},
+        data={"date_col": "date", "value_col": "value", "horizon": "7", "models": "sarimax"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert "sarimax" in resp.json()

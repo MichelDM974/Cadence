@@ -1101,6 +1101,35 @@ async def api_upload_forecast(
     )
 
 
+async def _prepare_backtest_inputs(
+    file, date_col, value_col, horizon, store_col, store_value, category_col, category_value,
+    extra_exog_cols, exog_file, exog_date_col, exog_value_cols, exog_store_col, exog_category_col,
+    location, use_ferie, use_vacances, use_meteo,
+):
+    """Préparation commune à /api/upload/backtest et /api/upload/autotune :
+    lecture du CSV, exogène externe éventuellement restreinte à l'entité, puis
+    découpage historique/futur. Les deux endpoints ne diffèrent que par
+    l'appel final (backtest vs autotune) — ces 14 lignes étaient recopiées à
+    l'identique de part et d'autre, avec le risque qu'un correctif n'atterrisse
+    que d'un côté. Les listes de paramètres, elles, restent déclarées deux fois :
+    FastAPI en a besoin pour lier les champs du formulaire.
+    """
+    extra_cols = parse_form_list(extra_exog_cols)
+    df = parse_csv(
+        await read_upload_limited(file), date_col, value_col, store_col, store_value, category_col, category_value, extra_cols
+    )
+    external_exog = await load_external_exog(exog_file, exog_date_col, exog_value_cols, exog_store_col, exog_category_col)
+    if external_exog is not None and (exog_store_col or exog_category_col):
+        external_exog = external_exog_for_entity(
+            external_exog, exog_date_col, parse_form_list(exog_value_cols),
+            exog_store_col, store_value, exog_category_col, category_value,
+        )
+    exog_hist, exog_future = backtest_exog(
+        df, horizon, location, use_ferie, use_vacances, use_meteo, extra_cols, external_exog
+    )
+    return df, exog_hist, exog_future
+
+
 @app.post("/api/upload/backtest", dependencies=[Depends(current_user)])
 async def api_upload_backtest(
     file: UploadFile = File(...),
@@ -1123,18 +1152,10 @@ async def api_upload_backtest(
     use_vacances: bool = Form(True),
     use_meteo: bool = Form(True),
 ):
-    extra_cols = parse_form_list(extra_exog_cols)
-    df = parse_csv(
-        await read_upload_limited(file), date_col, value_col, store_col, store_value, category_col, category_value, extra_cols
-    )
-    external_exog = await load_external_exog(exog_file, exog_date_col, exog_value_cols, exog_store_col, exog_category_col)
-    if external_exog is not None and (exog_store_col or exog_category_col):
-        external_exog = external_exog_for_entity(
-            external_exog, exog_date_col, parse_form_list(exog_value_cols),
-            exog_store_col, store_value, exog_category_col, category_value,
-        )
-    exog_hist, exog_future = backtest_exog(
-        df, horizon, location, use_ferie, use_vacances, use_meteo, extra_cols, external_exog
+    df, exog_hist, exog_future = await _prepare_backtest_inputs(
+        file, date_col, value_col, horizon, store_col, store_value, category_col, category_value,
+        extra_exog_cols, exog_file, exog_date_col, exog_value_cols, exog_store_col, exog_category_col,
+        location, use_ferie, use_vacances, use_meteo,
     )
     return backtest(
         df, horizon, exog_hist=exog_hist, exog_future=exog_future, model_params=parse_model_params(model_params)
@@ -1163,18 +1184,10 @@ async def api_upload_autotune(
     use_vacances: bool = Form(True),
     use_meteo: bool = Form(True),
 ):
-    extra_cols = parse_form_list(extra_exog_cols)
-    df = parse_csv(
-        await read_upload_limited(file), date_col, value_col, store_col, store_value, category_col, category_value, extra_cols
-    )
-    external_exog = await load_external_exog(exog_file, exog_date_col, exog_value_cols, exog_store_col, exog_category_col)
-    if external_exog is not None and (exog_store_col or exog_category_col):
-        external_exog = external_exog_for_entity(
-            external_exog, exog_date_col, parse_form_list(exog_value_cols),
-            exog_store_col, store_value, exog_category_col, category_value,
-        )
-    exog_hist, exog_future = backtest_exog(
-        df, horizon, location, use_ferie, use_vacances, use_meteo, extra_cols, external_exog
+    df, exog_hist, exog_future = await _prepare_backtest_inputs(
+        file, date_col, value_col, horizon, store_col, store_value, category_col, category_value,
+        extra_exog_cols, exog_file, exog_date_col, exog_value_cols, exog_store_col, exog_category_col,
+        location, use_ferie, use_vacances, use_meteo,
     )
     return autotune(
         df, horizon, exog_hist=exog_hist, exog_future=exog_future, model_params=parse_model_params(model_params)
