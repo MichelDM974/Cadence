@@ -89,6 +89,29 @@ def add_lag_features(
     return df
 
 
+YOY_HETEROGENEITY_THRESHOLD = 0.1
+
+
+def _should_auto_include_yoy(history: pd.DataFrame, group_cols: list[str]) -> bool:
+    """Décide s'il faut activer `yoy_trend` faute de préférence explicite de
+    l'appelant, à partir de la dispersion des longueurs d'historique entre
+    entités (coefficient de variation) : nul par construction sur un panel
+    homogène (toutes les entités ont exactement le même historique, ex.
+    *Store Sales* : cv=0.0) — l'axe n'y a jamais aidé (cf. benchmark
+    04/09/2026, journal-de-bord) et reste désactivé, comportement lean
+    inchangé. Nettement positif dès que les entités ont des historiques de
+    longueurs très inégales (ex. *Recruit*, restaurants à dates d'ouverture
+    différentes : cv=0.31) — l'axe y aide (même benchmark), donc activé
+    automatiquement. Seuil choisi avec large marge entre ces deux cas connus,
+    pas calé pile sur l'un des deux.
+    """
+    lengths = history.groupby(group_cols, observed=True).size()
+    if len(lengths) < 2 or lengths.mean() == 0:
+        return False
+    cv = lengths.std(ddof=0) / lengths.mean()
+    return bool(cv > YOY_HETEROGENEITY_THRESHOLD)
+
+
 def _build_code_maps(group_cols: list[str], combos: list[tuple[str, ...]]) -> dict[str, dict[str, int]]:
     """Encode chaque valeur d'entité en entier, une fois pour toutes, à
     partir de `combos` (déjà trié) — un code entier plutôt que le dtype
@@ -316,9 +339,13 @@ def run_bulk_lightgbm_forecast(
     `feature_config` (opt-in, absent par défaut = comportement lean actuel) :
     `{"lag_days": (...), "rolling_windows": (...), "include_yoy": bool}` —
     cf. benchmarks *Store Sales*/*Recruit* (journal-de-bord) pour l'origine
-    de ces axes et pourquoi ils ne sont pas activés par défaut (utiles
-    seulement avec un historique long et homogène, pas garanti pour
-    l'usage généraliste de l'app).
+    de ces axes. `lag_days`/`rolling_windows` restent lean par défaut (utiles
+    seulement avec un historique long et homogène, pas garanti pour l'usage
+    généraliste de l'app). `include_yoy`, lui, est décidé automatiquement
+    (cf. `_should_auto_include_yoy`) si l'appelant ne le précise pas
+    explicitement — le seul des 3 axes dont l'utilité se détecte de façon
+    fiable à partir des données elles-mêmes plutôt que de dépendre d'un choix
+    utilisateur.
     """
     history, future_exog, skipped = _build_entity_frames(
         raw, date_col, value_col, group_cols, horizon, combos, group_indices, extra_cols,
@@ -337,7 +364,10 @@ def run_bulk_lightgbm_forecast(
     feature_config = feature_config or {}
     lag_days = tuple(feature_config.get("lag_days", LAG_DAYS))
     rolling_windows = tuple(feature_config.get("rolling_windows", ROLLING_WINDOWS))
-    include_yoy = bool(feature_config.get("include_yoy", False))
+    if "include_yoy" in feature_config:
+        include_yoy = bool(feature_config["include_yoy"])
+    else:
+        include_yoy = _should_auto_include_yoy(history, group_cols)
     tail_window_days = max(TAIL_WINDOW_DAYS, max(*lag_days, *rolling_windows) + 7, 364 + 28 + 7 if include_yoy else 0)
 
     train_df = add_lag_features(add_calendar_features(history.copy()), group_cols, lag_days, rolling_windows, include_yoy)

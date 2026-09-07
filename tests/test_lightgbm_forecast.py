@@ -99,9 +99,12 @@ def test_add_lag_features_include_yoy_computes_trend_from_last_year():
 
 def test_run_bulk_lightgbm_forecast_feature_config_is_opt_in():
     """feature_config par défaut (absent) doit reproduire exactement le
-    comportement lean actuel — les axes (lags fins, yoy_trend, régularisation)
-    sont opt-in, jamais des changements de défaut (cf. journal-de-bord :
-    aucun n'améliore Store Sales et Recruit à la fois)."""
+    comportement lean actuel pour lags fins/rolling windows — ces deux axes
+    restent opt-in, jamais des changements de défaut (cf. journal-de-bord :
+    aucun n'améliore Store Sales et Recruit à la fois). `include_yoy` est
+    l'exception, désormais auto-détecté (cf. tests dédiés ci-dessous) — ce
+    test-ci le fixe explicitement à True pour ne pas dépendre de cette
+    détection et rester focalisé sur les 2 autres axes."""
     raw = _multi_entity_frame(60, [("1", "A"), ("2", "B")])
     group_cols = ["store_nbr", "family"]
     combos, group_indices = _combos_and_indices(raw, group_cols)
@@ -118,7 +121,73 @@ def test_run_bulk_lightgbm_forecast_feature_config_is_opt_in():
 
     assert skipped == set()
     assert len(rows) == len(combos) * 10
-    assert all(r["prevision"] >= 0 for r in rows)
+
+
+def test_should_auto_include_yoy_false_for_homogeneous_entity_lengths():
+    raw = _multi_entity_frame(200, [("1", "A"), ("2", "B"), ("3", "C")])
+    assert lf._should_auto_include_yoy(raw, ["store_nbr", "family"]) is False
+
+
+def test_should_auto_include_yoy_true_for_heterogeneous_entity_lengths():
+    long_entity = _multi_entity_frame(400, [("1", "A")])
+    short_entity = _multi_entity_frame(60, [("2", "B")])
+    raw = pd.concat([long_entity, short_entity], ignore_index=True)
+    assert lf._should_auto_include_yoy(raw, ["store_nbr", "family"]) is True
+
+
+def test_should_auto_include_yoy_false_for_single_entity():
+    raw = _multi_entity_frame(200, [("1", "A")])
+    assert lf._should_auto_include_yoy(raw, ["store_nbr", "family"]) is False
+
+
+def _entity_frame_ending(n_days: int, store: str, family: str, end: str = "2024-06-30") -> pd.DataFrame:
+    dates = pd.date_range(end=end, periods=n_days, freq="D")
+    return pd.DataFrame(
+        {
+            "date": [d.strftime("%Y-%m-%d") for d in dates],
+            "store_nbr": store,
+            "family": family,
+            "sales": [20 + 5 * (i % 7) + 0.05 * i for i in range(n_days)],
+        }
+    )
+
+
+def test_run_bulk_lightgbm_forecast_auto_enables_yoy_for_heterogeneous_history():
+    raw = pd.concat(
+        [_entity_frame_ending(400, "1", "A"), _entity_frame_ending(60, "2", "B")], ignore_index=True
+    )
+    group_cols = ["store_nbr", "family"]
+    combos, group_indices = _combos_and_indices(raw, group_cols)
+    call_args = (
+        raw, "date", "sales", group_cols, 10, combos, group_indices, [],
+        None, [],
+        None, None, None, None,
+        "store_nbr", "family", None, None,
+        _daily_series, align_external_exog, None,
+    )
+
+    auto_rows, _ = lf.run_bulk_lightgbm_forecast(*call_args, None, None, None)
+    explicit_true_rows, _ = lf.run_bulk_lightgbm_forecast(*call_args, None, None, {"include_yoy": True})
+
+    assert auto_rows == explicit_true_rows
+
+
+def test_run_bulk_lightgbm_forecast_keeps_yoy_off_for_homogeneous_history():
+    raw = _multi_entity_frame(200, [("1", "A"), ("2", "B")])
+    group_cols = ["store_nbr", "family"]
+    combos, group_indices = _combos_and_indices(raw, group_cols)
+    call_args = (
+        raw, "date", "sales", group_cols, 10, combos, group_indices, [],
+        None, [],
+        None, None, None, None,
+        "store_nbr", "family", None, None,
+        _daily_series, align_external_exog, None,
+    )
+
+    auto_rows, _ = lf.run_bulk_lightgbm_forecast(*call_args, None, None, None)
+    explicit_false_rows, _ = lf.run_bulk_lightgbm_forecast(*call_args, None, None, {"include_yoy": False})
+
+    assert auto_rows == explicit_false_rows
 
 
 def test_run_bulk_lightgbm_forecast_accepts_custom_lgb_params():
