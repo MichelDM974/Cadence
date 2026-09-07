@@ -105,8 +105,16 @@ def _vacation_periods(academie: str) -> tuple:
         fields = record["fields"]
         if fields.get("population") not in ("-", "Élèves"):
             continue  # exclut les dates spécifiques aux enseignants (été)
-        start = pd.Timestamp(fields["start_date"]).tz_localize(None).normalize()
-        end = pd.Timestamp(fields["end_date"]).tz_localize(None).normalize()
+        # L'API encode des minuits parisiens en UTC ("2019-04-19T22:00:00+00:00"
+        # = 20/04 00:00 à Paris) : convertir avant de retirer le fuseau, sinon
+        # .normalize() retient la veille. Et l'intervalle est semi-ouvert —
+        # end_date est le minuit du jour de *reprise* (06/05 pour des vacances
+        # finissant le 05/05) — d'où le -1 jour, `vacation_flags` comparant des
+        # bornes inclusives. Les deux corrections vont ensemble : n'en faire
+        # qu'une déplacerait le décalage d'un bout de la période à l'autre.
+        start = pd.Timestamp(fields["start_date"]).tz_convert("Europe/Paris").tz_localize(None).normalize()
+        reprise = pd.Timestamp(fields["end_date"]).tz_convert("Europe/Paris").tz_localize(None).normalize()
+        end = reprise - pd.Timedelta(days=1)
         periods.append((start, end))
     return tuple(periods)
 
