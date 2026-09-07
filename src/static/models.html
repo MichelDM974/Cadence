@@ -5,8 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Cadence — Modèles</title>
   <link rel="stylesheet" href="style.css" />
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css" />
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
 </head>
 <body>
   <header>
@@ -19,7 +17,8 @@
       <div class="account-menu">
         <button type="button" id="account-menu-btn" title="Paramètres" aria-label="Paramètres">⚙</button>
         <div id="settings-popup" class="settings-popup" hidden>
-          <p class="settings-empty">Aucun réglage pour l'instant.</p>
+          <p class="account-user">Connecté : <strong id="account-username"></strong></p>
+          <button type="button" id="logout-btn" class="account-dropdown-item">Se déconnecter</button>
         </div>
       </div>
     </div>
@@ -35,56 +34,10 @@
 
       <div class="model-params-block">
         <h3>SARIMAX</h3>
-        <div class="model-formula">
-          <button type="button" class="model-formula-info-btn" title="Détail des symboles" aria-label="Détail des symboles" aria-expanded="false" aria-controls="sarimax-formula-legend">⚙</button>
-
-          <p class="model-formula-intro">
-            On note (y<sub>t</sub>)<sub>t=1..n</sub> la série temporelle observée, par exemple le nombre de
-            ventes effectuées par le magasin observé le jour t.
-          </p>
-
-          <div class="model-formula-step">
-            <p class="model-formula-step-label">1. Différenciation — retirer tendance et saisonnalité</p>
-            <p class="model-formula-eq" data-latex="w_t = (1-B)^d (1-B^s)^D \, y_t">w<sub>t</sub> = (1&minus;B)<sup>d</sup> (1&minus;B<sup>s</sup>)<sup>D</sup> · y<sub>t</sub></p>
-            <p class="model-formula-step-desc">
-              (1&minus;B)y<sub>t</sub> = y<sub>t</sub> &minus; y<sub>t&minus;1</sub>, l'écart avec la veille :
-              c'est ça, une différenciation. Appliquée d fois, elle élimine la tendance ; (1&minus;B<sup>s</sup>)
-              fait la même chose à l'horizon s (l'écart avec le même jour du cycle précédent), appliquée D
-              fois pour éliminer la saisonnalité — on obtient ainsi la série stationnaire w<sub>t</sub>, celle
-              que modélisent les blocs 2 et 3.
-            </p>
-          </div>
-          <div class="model-formula-step">
-            <p class="model-formula-step-label">2. Partie autorégressive (AR) — les jours précédents</p>
-            <p class="model-formula-eq" data-latex="AR_t = \varphi_p(B) \, \Phi_P(B^s) \, w_t">AR<sub>t</sub> = φ<sub>p</sub>(B) · Φ<sub>P</sub>(B<sup>s</sup>) · w<sub>t</sub></p>
-            <p class="model-formula-step-desc">
-              AR<sub>t</sub> est la valeur d'aujourd'hui, estimée à partir de celle des p derniers jours
-              (ex. hier, avant-hier...) et de celle des mêmes jours lors des P cycles hebdomadaires
-              précédents (ex. le même jour la semaine dernière) — deux échelles de mémoire combinées.
-            </p>
-          </div>
-          <div class="model-formula-step">
-            <p class="model-formula-step-label">3. Partie moyenne mobile (MA) — les erreurs précédentes</p>
-            <p class="model-formula-eq" data-latex="MA_t = \theta_q(B) \, \Theta_Q(B^s) \, \varepsilon_t + \beta \, X_t">MA<sub>t</sub> = θ<sub>q</sub>(B) · Θ<sub>Q</sub>(B<sup>s</sup>) · ε<sub>t</sub> + β · X<sub>t</sub></p>
-            <p class="model-formula-step-desc">
-              Ce que le bloc AR n'a pas capté (ε<sub>t</sub>, le bruit) est corrigé en tenant compte des q
-              dernières erreurs de prévision et de leurs équivalents saisonniers (Q). β·X<sub>t</sub> ajoute
-              l'effet de variables exogènes (météo, promotions...) si tu en utilises.
-            </p>
-          </div>
-
-          <p class="model-formula-summary">Le modèle complet impose <strong>AR<sub>t</sub> = MA<sub>t</sub></strong> : à chaque jour, la partie autorégressive (bloc 2) doit égaler la partie moyenne mobile (bloc 3) — c'est cette égalité que Cadence ajuste pour trouver les meilleurs paramètres.</p>
-
-          <p id="sarimax-formula-legend" class="hint" hidden>
-            y<sub>t</sub> : valeur observée au temps t · w<sub>t</sub> : série différenciée (stationnaire) ·
-            AR<sub>t</sub>, MA<sub>t</sub> : parties autorégressive et moyenne mobile, définies dans les blocs 2 et 3 ·
-            B : opérateur de retard (B·y<sub>t</sub> = y<sub>t&minus;1</sub>) · ε<sub>t</sub> : bruit blanc ·
-            φ<sub>p</sub>, θ<sub>q</sub> : polynômes autorégressif et moyenne mobile (ordres p, q) ·
-            Φ<sub>P</sub>, Θ<sub>Q</sub> : leurs équivalents saisonniers (ordres P, Q, période s) ·
-            β·X<sub>t</sub> : variables exogènes (météo, promotions...), si utilisées.
-          </p>
-        </div>
-        <p class="hint">Ordre (p, d, q) et saisonnalité hebdomadaire (P, D, Q, s).</p>
+        <p class="hint">
+          Ordre (p, d, q) et saisonnalité hebdomadaire (P, D, Q, s). Détail du fonctionnement (formules,
+          saisonnalité, exogènes) → <a href="theorie.html">page Théorie</a>.
+        </p>
         <div class="param-row">
           <div class="param-control"><label for="mp-sarimax-p">p</label><input type="number" id="mp-sarimax-p" min="0" max="5" step="1" /></div>
           <p class="param-desc">Ordre autorégressif : nombre de valeurs passées de la série utilisées pour prédire la suivante.</p>
@@ -224,6 +177,7 @@
     </section>
   </main>
 
+  <script src="auth-guard.js"></script>
   <script src="model-params.js"></script>
   <script src="menu.js"></script>
   <script src="models.js"></script>
