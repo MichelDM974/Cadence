@@ -89,7 +89,21 @@ def add_lag_features(
     return df
 
 
-YOY_HETEROGENEITY_THRESHOLD = 0.1
+ENTITY_HISTORY_CV_THRESHOLD = 0.1
+REDUCED_REGULARIZATION_PARAMS = {"min_data_in_leaf": 10, "lambda_l2": 0.05}
+
+
+def _entity_history_length_cv(history: pd.DataFrame, group_cols: list[str]) -> float | None:
+    """Coefficient de variation des longueurs d'historique entre entités —
+    signal partagé derrière les deux décisions automatiques ci-dessous.
+    `None` quand il ne peut pas être calculé de façon significative (moins
+    de 2 entités) : les deux décisions traitent ça comme "pas de signal",
+    jamais comme une hétérogénéité nulle par défaut.
+    """
+    lengths = history.groupby(group_cols, observed=True).size()
+    if len(lengths) < 2 or lengths.mean() == 0:
+        return None
+    return float(lengths.std(ddof=0) / lengths.mean())
 
 
 def _should_auto_include_yoy(history: pd.DataFrame, group_cols: list[str]) -> bool:
@@ -105,11 +119,22 @@ def _should_auto_include_yoy(history: pd.DataFrame, group_cols: list[str]) -> bo
     automatiquement. Seuil choisi avec large marge entre ces deux cas connus,
     pas calé pile sur l'un des deux.
     """
-    lengths = history.groupby(group_cols, observed=True).size()
-    if len(lengths) < 2 or lengths.mean() == 0:
-        return False
-    cv = lengths.std(ddof=0) / lengths.mean()
-    return bool(cv > YOY_HETEROGENEITY_THRESHOLD)
+    cv = _entity_history_length_cv(history, group_cols)
+    return cv is not None and cv > ENTITY_HISTORY_CV_THRESHOLD
+
+
+def _should_auto_reduce_regularization(history: pd.DataFrame, group_cols: list[str]) -> bool:
+    """Pendant symétrique de `_should_auto_include_yoy`, sur le même signal :
+    régularisation réduite (`REDUCED_REGULARIZATION_PARAMS`) activée quand
+    l'historique est homogène entre entités (cv bas, ex. *Store Sales*) —
+    confirmé en isolation le 07/09/2026 (RMSLE backtest local 0.54118 ->
+    0.53694, cf. BENCHMARKS.md), alors que le seul test connu sur historique
+    hétérogène combinait cet axe à d'autres (résultat non isolé, donc jamais
+    activé faute de preuve) : gardé désactivé dès que cv > seuil ou
+    indéterminé, jamais le contraire par défaut.
+    """
+    cv = _entity_history_length_cv(history, group_cols)
+    return cv is not None and cv <= ENTITY_HISTORY_CV_THRESHOLD
 
 
 def _build_code_maps(group_cols: list[str], combos: list[tuple[str, ...]]) -> dict[str, dict[str, int]]:
@@ -338,14 +363,15 @@ def run_bulk_lightgbm_forecast(
 
     `feature_config` (opt-in, absent par défaut = comportement lean actuel) :
     `{"lag_days": (...), "rolling_windows": (...), "include_yoy": bool}` —
-    cf. benchmarks *Store Sales*/*Recruit* (journal-de-bord) pour l'origine
-    de ces axes. `lag_days`/`rolling_windows` restent lean par défaut (utiles
-    seulement avec un historique long et homogène, pas garanti pour l'usage
-    généraliste de l'app). `include_yoy`, lui, est décidé automatiquement
-    (cf. `_should_auto_include_yoy`) si l'appelant ne le précise pas
-    explicitement — le seul des 3 axes dont l'utilité se détecte de façon
-    fiable à partir des données elles-mêmes plutôt que de dépendre d'un choix
-    utilisateur.
+    cf. benchmarks *Store Sales*/*Recruit* (journal-de-bord, BENCHMARKS.md)
+    pour l'origine de ces axes. `lag_days`/`rolling_windows` restent lean par
+    défaut (pas de preuve isolée d'amélioration universelle). `include_yoy`
+    et la régularisation (`lgb_params`, si non fourni explicitement par
+    l'appelant) sont eux décidés automatiquement à partir du même signal —
+    dispersion des longueurs d'historique entre entités, cf.
+    `_should_auto_include_yoy`/`_should_auto_reduce_regularization` — les
+    deux seuls axes dont l'utilité se détecte de façon fiable à partir des
+    données elles-mêmes plutôt que de dépendre d'un choix utilisateur.
     """
     history, future_exog, skipped = _build_entity_frames(
         raw, date_col, value_col, group_cols, horizon, combos, group_indices, extra_cols,
@@ -368,6 +394,8 @@ def run_bulk_lightgbm_forecast(
         include_yoy = bool(feature_config["include_yoy"])
     else:
         include_yoy = _should_auto_include_yoy(history, group_cols)
+    if lgb_params is None and _should_auto_reduce_regularization(history, group_cols):
+        lgb_params = REDUCED_REGULARIZATION_PARAMS
     tail_window_days = max(TAIL_WINDOW_DAYS, max(*lag_days, *rolling_windows) + 7, 364 + 28 + 7 if include_yoy else 0)
 
     train_df = add_lag_features(add_calendar_features(history.copy()), group_cols, lag_days, rolling_windows, include_yoy)

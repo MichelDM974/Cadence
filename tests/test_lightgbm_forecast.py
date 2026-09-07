@@ -1,4 +1,5 @@
 import io
+import time
 
 import numpy as np
 import pandas as pd
@@ -140,6 +141,23 @@ def test_should_auto_include_yoy_false_for_single_entity():
     assert lf._should_auto_include_yoy(raw, ["store_nbr", "family"]) is False
 
 
+def test_should_auto_reduce_regularization_true_for_homogeneous_entity_lengths():
+    raw = _multi_entity_frame(200, [("1", "A"), ("2", "B"), ("3", "C")])
+    assert lf._should_auto_reduce_regularization(raw, ["store_nbr", "family"]) is True
+
+
+def test_should_auto_reduce_regularization_false_for_heterogeneous_entity_lengths():
+    long_entity = _multi_entity_frame(400, [("1", "A")])
+    short_entity = _multi_entity_frame(60, [("2", "B")])
+    raw = pd.concat([long_entity, short_entity], ignore_index=True)
+    assert lf._should_auto_reduce_regularization(raw, ["store_nbr", "family"]) is False
+
+
+def test_should_auto_reduce_regularization_false_for_single_entity():
+    raw = _multi_entity_frame(200, [("1", "A")])
+    assert lf._should_auto_reduce_regularization(raw, ["store_nbr", "family"]) is False
+
+
 def _entity_frame_ending(n_days: int, store: str, family: str, end: str = "2024-06-30") -> pd.DataFrame:
     dates = pd.date_range(end=end, periods=n_days, freq="D")
     return pd.DataFrame(
@@ -170,6 +188,46 @@ def test_run_bulk_lightgbm_forecast_auto_enables_yoy_for_heterogeneous_history()
     explicit_true_rows, _ = lf.run_bulk_lightgbm_forecast(*call_args, None, None, {"include_yoy": True})
 
     assert auto_rows == explicit_true_rows
+
+
+def test_run_bulk_lightgbm_forecast_auto_reduces_regularization_for_homogeneous_history():
+    raw = _multi_entity_frame(200, [("1", "A"), ("2", "B"), ("3", "C")])
+    group_cols = ["store_nbr", "family"]
+    combos, group_indices = _combos_and_indices(raw, group_cols)
+    call_args = (
+        raw, "date", "sales", group_cols, 10, combos, group_indices, [],
+        None, [],
+        None, None, None, None,
+        "store_nbr", "family", None, None,
+        _daily_series, align_external_exog, None,
+    )
+
+    auto_rows, _ = lf.run_bulk_lightgbm_forecast(*call_args, None, None, None)
+    explicit_reduced_rows, _ = lf.run_bulk_lightgbm_forecast(
+        *call_args, lf.REDUCED_REGULARIZATION_PARAMS, None, None
+    )
+
+    assert auto_rows == explicit_reduced_rows
+
+
+def test_run_bulk_lightgbm_forecast_keeps_regularization_default_for_heterogeneous_history():
+    raw = pd.concat(
+        [_entity_frame_ending(400, "1", "A"), _entity_frame_ending(60, "2", "B")], ignore_index=True
+    )
+    group_cols = ["store_nbr", "family"]
+    combos, group_indices = _combos_and_indices(raw, group_cols)
+    call_args = (
+        raw, "date", "sales", group_cols, 10, combos, group_indices, [],
+        None, [],
+        None, None, None, None,
+        "store_nbr", "family", None, None,
+        _daily_series, align_external_exog, None,
+    )
+
+    auto_rows, _ = lf.run_bulk_lightgbm_forecast(*call_args, None, None, None)
+    explicit_default_rows, _ = lf.run_bulk_lightgbm_forecast(*call_args, {}, None, None)
+
+    assert auto_rows == explicit_default_rows
 
 
 def test_run_bulk_lightgbm_forecast_keeps_yoy_off_for_homogeneous_history():
@@ -321,6 +379,7 @@ def test_bulk_lightgbm_endpoint_produces_csv_without_ci():
         progress = client.get(f"/api/upload/forecast/bulk/progress/{job_id}").json()
         if progress["status"] != "running":
             break
+        time.sleep(0.05)  # laisse le job d'arrière-plan avancer plutôt que de saturer en poll serré
     assert progress["status"] == "done"
 
     download = client.get(f"/api/upload/forecast/bulk/download/{job_id}")

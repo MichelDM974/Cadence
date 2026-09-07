@@ -10,6 +10,16 @@ But : décider quels axes sont sûrs par défaut (améliorent ou n'affectent pas
 les deux datasets) vs doivent rester opt-in (aident l'un, pénalisent l'autre,
 notamment les entités à historique court côté Recruit).
 
+`yoy_trend` (07/09/2026) et la régularisation réduite (même jour) sont
+désormais auto-détectés à partir de l'hétérogénéité des historiques par
+entité (cf. `_should_auto_include_yoy`/`_should_auto_reduce_regularization`,
+BENCHMARKS.md) — "lean (défaut actuel)" ci-dessous les applique donc déjà
+automatiquement selon le dataset : attendu que "lean" égale exactement
+"lag annuel + yoy_trend" sur Recruit (hétérogène) et "régularisation
+réduite" sur Store Sales (homogène). Gardés en variantes explicites
+séparées pour vérifier cette équivalence à chaque run, pas pour comparer
+un vrai "off" qui n'existe plus par défaut.
+
 Usage : python benchmark_lightgbm_variants.py [store_sales|recruit|both]
 """
 

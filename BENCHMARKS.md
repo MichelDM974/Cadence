@@ -56,7 +56,7 @@ réel de production — pas une réimplémentation séparée.
 
 | Configuration | RMSLE |
 |---|---|
-| régularisation réduite | 0.72230 |
+| régularisation réduite (forcée) | 0.72230 |
 | **lean (défaut actuel — yoy_trend auto-détecté)** | **0.72323** |
 | lag annuel + yoy_trend (forcé) | 0.72323 |
 | lags fins | 0.72426 |
@@ -68,9 +68,30 @@ exactement le score de la config explicite équivalente — confirme que la
 détection automatique (coefficient de variation des longueurs d'historique
 par entité) s'active correctement sur ce dataset hétérogène (cv=0.31),
 contre l'ancien défaut désactivé. `régularisation réduite` reste légèrement
-meilleure ici mais dégrade Store Sales (cf. ci-dessous) — pas retenue comme
-défaut, cf. règle "améliore tous les cas connus ou reste optionnelle"
-(`journal-de-bord/cadence.md`, Décisions actées).
+meilleure ici en isolation, mais n'est pas auto-activée sur ce dataset
+hétérogène (cv=0.31 > seuil) : gardée opt-in faute de preuve isolée sur
+historique hétérogène (le seul test connu la combinait à d'autres axes,
+cf. ci-dessous) — cf. règle "améliore tous les cas connus ou reste
+optionnelle" (`journal-de-bord/cadence.md`, Décisions actées).
+
+### Store Sales — régularisation réduite isolée (07/09/2026, `benchmark_lightgbm_variants.py`)
+
+| Configuration | RMSLE |
+|---|---|
+| lean (ancien défaut, avant auto-détection) | 0.54118 |
+| **régularisation réduite (= défaut actuel, auto-détecté)** | **0.53694** |
+
+Confirme en isolation ce que le combiné du 03/09 (ci-dessous) laissait
+supposer : sur ce dataset homogène (cv=0.0), la régularisation réduite
+seule améliore bien le score (~0.8%), pas seulement en mélange avec
+d'autres axes. Auto-détectée depuis le 07/09/2026 (même signal que
+`yoy_trend`, cf. `_should_auto_reduce_regularization`) — "lean" ci-dessus
+égale donc désormais ce résultat. Les valeurs (0.53-0.54) sont loin du
+score Kaggle officiel (0.42475, tableau plus haut) : le backtest local
+sous-estime la vraie performance sur ce dataset (fenêtre de 16 jours moins
+représentative que le test Kaggle réel, déjà documenté le 03/09) — la
+comparaison **relative** entre les deux lignes reste fiable (même run, même
+fenêtre), l'écart absolu avec Kaggle non.
 
 ### Store Sales — combiné (lags fins + yoy + régularisation réduite), 03/09/2026
 
@@ -81,15 +102,12 @@ défaut, cf. règle "améliore tous les cas connus ou reste optionnelle"
 Le score agrégat (0.498) est plombé par une seule famille de produits
 (rentrée scolaire, croissance hors de portée d'un arbre de décision) ; hors
 cette famille, 0.4232 — moins bon que le tweedie seul officiel (0.42475 ci-
-dessus), d'où la décision de ne pas combiner ces axes par défaut. Backtest
-plus ancien (méthodologie légèrement différente de celle utilisée ci-dessus
-pour Recruit) ; pas encore rejoué avec `benchmark_lightgbm_variants.py`
-variante par variante sur Store Sales depuis l'introduction de `yoy_trend`
-auto-détecté (dataset volumineux, 1782 entités — plusieurs dizaines de
-minutes par variante) : le résultat est cependant garanti inchangé sur ce
-dataset précis, puisque `yoy_trend` ne s'active que sur historique
-hétérogène (cv > 0.1) et que Store Sales est parfaitement homogène (cv=0.0
-— toutes les entités ont exactement le même historique).
+dessus), d'où la décision d'alors de ne pas combiner ces axes par défaut.
+Backtest plus ancien (méthodologie légèrement différente du run isolé
+ci-dessus) ; `lags fins`/`yoy_trend` combinés à la régularisation n'ont pas
+été retestés isolément sur Store Sales depuis (dataset volumineux,
+plusieurs dizaines de minutes par variante) — `yoy_trend` resterait de
+toute façon désactivé ici par l'auto-détection (historique homogène).
 
 ## Reproduire
 
