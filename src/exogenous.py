@@ -51,6 +51,12 @@ ACADEMIE_CENTROIDS = {
     "Guadeloupe": (16.1976, -61.5399),
     "Martinique": (14.6534, -61.0189),
     "Guyane": (3.9243, -53.2385),
+    # Manquaient jusqu'ici alors que le compte annoncé était de 30 : un point
+    # de vente à Saint-Denis se voyait rattacher à l'académie la plus proche
+    # parmi les autres, soit la Corse, et recevait donc un calendrier
+    # d'hémisphère nord sans rapport avec le sien.
+    "Réunion": (-21.1151, 55.5364),
+    "Mayotte": (-12.8275, 45.1662),
 }
 
 
@@ -151,7 +157,13 @@ def _open_meteo_archive(lat: float, lon: float, start: pd.Timestamp, end: pd.Tim
             "start_date": start.date().isoformat(),
             "end_date": end.date().isoformat(),
             "daily": "temperature_2m_max,precipitation_sum",
-            "timezone": "Europe/Paris",
+            # "auto" = fuseau déduit des coordonnées. En forçant Europe/Paris,
+            # les agrégats quotidiens (max de température, cumul de pluie)
+            # étaient découpés sur des journées parisiennes : pour un point de
+            # vente à Tokyo ou Montréal, le "max du 5 mars" couvrait une
+            # fenêtre décalée de 7 à 14 h par rapport à sa propre journée,
+            # donc une exogène désalignée d'une demi-journée avec la série.
+            "timezone": "auto",
         },
         timeout=15,
     )
