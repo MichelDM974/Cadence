@@ -12,6 +12,15 @@ from api import FORECAST_MODELS, align_external_exog, app, group_combinations, _
 client = TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def _session():
+    """L'endpoint de génération en masse exige une session (cf.
+    conftest.connecter)."""
+    from conftest import connecter
+
+    connecter(client)
+
+
 def _multi_entity_frame(n_days: int, entities: list[tuple[str, str]]) -> pd.DataFrame:
     """Deux entités par défaut, saisonnalité hebdo déterministe + tendance
     légère + un décalage de niveau entre entités (pas de bruit aléatoire,

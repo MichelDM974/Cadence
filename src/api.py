@@ -503,6 +503,20 @@ def autotune(
     return result
 
 
+MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 Mo : très au-dessus d'un export de caisse réel
+
+
+async def read_upload_limited(file: UploadFile) -> bytes:
+    """Lit un fichier uploadé en refusant tout ce qui dépasse
+    MAX_UPLOAD_BYTES. Sans cette borne, le contenu entier est chargé en
+    mémoire avant le moindre contrôle : un seul envoi de plusieurs Go
+    suffisait à faire tomber le process."""
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"Fichier trop volumineux (limite {MAX_UPLOAD_BYTES // (1024 * 1024)} Mo)")
+    return content
+
+
 def _read_csv_flexible(content: bytes) -> pd.DataFrame:
     """Essaie d'abord la virgule (moteur C, rapide même sur un gros fichier) ;
     ne bascule vers la détection automatique du séparateur (moteur Python,
@@ -720,7 +734,7 @@ async def load_external_exog(
     value_cols = parse_form_list(exog_value_cols)
     if not exog_date_col or not value_cols:
         raise HTTPException(400, "Colonnes du fichier exogène manquantes")
-    return parse_external_exog(await exog_file.read(), exog_date_col, value_cols, exog_store_col, exog_category_col)
+    return parse_external_exog(await read_upload_limited(exog_file), exog_date_col, value_cols, exog_store_col, exog_category_col)
 
 
 def group_combinations(raw: pd.DataFrame, group_cols: list[str]) -> list[tuple[str, ...]]:
@@ -830,20 +844,20 @@ def backtest_exog(
     return exog.iloc[:-horizon], exog.iloc[-horizon:]
 
 
-@app.get("/api/stores")
+@app.get("/api/stores", dependencies=[Depends(current_user)])
 def api_stores(n: int = 20):
     visits = pd.read_csv(f"{DATA_DIR}/air_visit_data.csv")
     counts = visits.groupby("air_store_id").size().sort_values(ascending=False)
     return [{"id": store_id, "n_days": int(count)} for store_id, count in counts.head(n).items()]
 
 
-@app.get("/api/stores/{store_id}/analysis")
+@app.get("/api/stores/{store_id}/analysis", dependencies=[Depends(current_user)])
 def api_store_analysis(store_id: str):
     df = load_series(store_id)
     return analyze(df, flags={"ferie": df["holiday_flg"]}, unit_label="couverts")
 
 
-@app.get("/api/stores/{store_id}/forecast")
+@app.get("/api/stores/{store_id}/forecast", dependencies=[Depends(current_user)])
 def api_store_forecast(
     store_id: str,
     horizon: int = Query(28, ge=7, le=90),
@@ -853,7 +867,7 @@ def api_store_forecast(
     return forecast(load_series(store_id), horizon, model=model, model_params=parse_model_params(model_params).get(model))
 
 
-@app.get("/api/stores/{store_id}/backtest")
+@app.get("/api/stores/{store_id}/backtest", dependencies=[Depends(current_user)])
 def api_store_backtest(store_id: str, horizon: int = Query(28, ge=7, le=90), model_params: str | None = Query(None)):
     df = load_series(store_id)
     exog = df[["holiday_flg"]]
@@ -863,7 +877,7 @@ def api_store_backtest(store_id: str, horizon: int = Query(28, ge=7, le=90), mod
     )
 
 
-@app.get("/api/stores/{store_id}/autotune")
+@app.get("/api/stores/{store_id}/autotune", dependencies=[Depends(current_user)])
 def api_store_autotune(store_id: str, horizon: int = Query(28, ge=7, le=90), model_params: str | None = Query(None)):
     df = load_series(store_id)
     exog = df[["holiday_flg"]]
@@ -873,15 +887,15 @@ def api_store_autotune(store_id: str, horizon: int = Query(28, ge=7, le=90), mod
     )
 
 
-@app.post("/api/upload/store-ids")
+@app.post("/api/upload/store-ids", dependencies=[Depends(current_user)])
 async def api_upload_store_ids(file: UploadFile = File(...), store_col: str = Form(...)):
-    raw = _read_csv_flexible(await file.read())
+    raw = _read_csv_flexible(await read_upload_limited(file))
     if store_col not in raw.columns:
         raise HTTPException(400, "Colonne identifiant introuvable dans le CSV")
     return {"store_ids": sorted_store_ids(raw[store_col])}
 
 
-@app.post("/api/upload/columns/detect")
+@app.post("/api/upload/columns/detect", dependencies=[Depends(current_user)])
 async def api_upload_columns_detect(
     file: UploadFile = File(...),
     date_col: str = Form(...),
@@ -892,7 +906,7 @@ async def api_upload_columns_detect(
     un identifiant quasi unique ou une mesure continue — pour suggérer à
     l'utilisateur que le fichier contient plusieurs entités/catégories.
     """
-    raw = _read_csv_flexible(await file.read())
+    raw = _read_csv_flexible(await read_upload_limited(file))
     n_rows = len(raw)
     candidates = []
     if n_rows:
@@ -907,7 +921,7 @@ async def api_upload_columns_detect(
     return {"candidates": candidates}
 
 
-@app.post("/api/upload/exog/validate")
+@app.post("/api/upload/exog/validate", dependencies=[Depends(current_user)])
 async def api_upload_exog_validate(
     file: UploadFile = File(...),
     date_col: str = Form(...),
@@ -924,7 +938,7 @@ async def api_upload_exog_validate(
     principal il fournit de vraies valeurs futures — au-delà, la dernière
     valeur connue est reportée (cf. align_external_exog).
     """
-    main_raw = _read_csv_flexible(await file.read())
+    main_raw = _read_csv_flexible(await read_upload_limited(file))
     if date_col not in main_raw.columns:
         raise HTTPException(400, "Colonne date introuvable dans le fichier principal")
     main_dates = _parse_dates(main_raw[date_col]).dropna()
@@ -934,7 +948,7 @@ async def api_upload_exog_validate(
 
     value_cols = parse_form_list(exog_value_cols)
     external = parse_external_exog(
-        await exog_file.read(), exog_date_col, value_cols, exog_store_col, exog_category_col
+        await read_upload_limited(exog_file), exog_date_col, value_cols, exog_store_col, exog_category_col
     )
 
     group_cols = [c for c in (exog_store_col, exog_category_col) if c]
@@ -965,7 +979,7 @@ async def api_upload_exog_validate(
     }
 
 
-@app.post("/api/upload/analysis")
+@app.post("/api/upload/analysis", dependencies=[Depends(current_user)])
 async def api_upload_analysis(
     file: UploadFile = File(...),
     date_col: str = Form(...),
@@ -979,12 +993,12 @@ async def api_upload_analysis(
     use_vacances: bool = Form(True),
     use_meteo: bool = Form(True),
 ):
-    df = parse_csv(await file.read(), date_col, value_col, store_col, store_value, category_col, category_value)
+    df = parse_csv(await read_upload_limited(file), date_col, value_col, store_col, store_value, category_col, category_value)
     flags, weather = flags_and_weather(df, location, use_ferie, use_vacances, use_meteo)
     return analyze(df, flags=flags, weather=weather)
 
 
-@app.post("/api/upload/forecast")
+@app.post("/api/upload/forecast", dependencies=[Depends(current_user)])
 async def api_upload_forecast(
     file: UploadFile = File(...),
     date_col: str = Form(...),
@@ -1009,7 +1023,7 @@ async def api_upload_forecast(
 ):
     extra_cols = parse_form_list(extra_exog_cols)
     df = parse_csv(
-        await file.read(), date_col, value_col, store_col, store_value, category_col, category_value, extra_cols
+        await read_upload_limited(file), date_col, value_col, store_col, store_value, category_col, category_value, extra_cols
     )
     external_exog = await load_external_exog(exog_file, exog_date_col, exog_value_cols, exog_store_col, exog_category_col)
     if external_exog is not None and (exog_store_col or exog_category_col):
@@ -1026,7 +1040,7 @@ async def api_upload_forecast(
     )
 
 
-@app.post("/api/upload/backtest")
+@app.post("/api/upload/backtest", dependencies=[Depends(current_user)])
 async def api_upload_backtest(
     file: UploadFile = File(...),
     date_col: str = Form(...),
@@ -1050,7 +1064,7 @@ async def api_upload_backtest(
 ):
     extra_cols = parse_form_list(extra_exog_cols)
     df = parse_csv(
-        await file.read(), date_col, value_col, store_col, store_value, category_col, category_value, extra_cols
+        await read_upload_limited(file), date_col, value_col, store_col, store_value, category_col, category_value, extra_cols
     )
     external_exog = await load_external_exog(exog_file, exog_date_col, exog_value_cols, exog_store_col, exog_category_col)
     if external_exog is not None and (exog_store_col or exog_category_col):
@@ -1066,7 +1080,7 @@ async def api_upload_backtest(
     )
 
 
-@app.post("/api/upload/autotune")
+@app.post("/api/upload/autotune", dependencies=[Depends(current_user)])
 async def api_upload_autotune(
     file: UploadFile = File(...),
     date_col: str = Form(...),
@@ -1090,7 +1104,7 @@ async def api_upload_autotune(
 ):
     extra_cols = parse_form_list(extra_exog_cols)
     df = parse_csv(
-        await file.read(), date_col, value_col, store_col, store_value, category_col, category_value, extra_cols
+        await read_upload_limited(file), date_col, value_col, store_col, store_value, category_col, category_value, extra_cols
     )
     external_exog = await load_external_exog(exog_file, exog_date_col, exog_value_cols, exog_store_col, exog_category_col)
     if external_exog is not None and (exog_store_col or exog_category_col):
@@ -1327,7 +1341,7 @@ def resolve_bulk_groups(
     return raw, group_cols
 
 
-@app.post("/api/upload/forecast/bulk/count")
+@app.post("/api/upload/forecast/bulk/count", dependencies=[Depends(current_user)])
 async def api_upload_forecast_bulk_count(
     file: UploadFile = File(...),
     store_col: str | None = Form(None),
@@ -1339,12 +1353,12 @@ async def api_upload_forecast_bulk_count(
     deux) qu'une prévision groupée parcourrait — utilisé côté client pour
     afficher une estimation du nombre de lignes avant de lancer le job.
     """
-    raw = _read_csv_flexible(await file.read())
+    raw = _read_csv_flexible(await read_upload_limited(file))
     raw, group_cols = resolve_bulk_groups(raw, store_col, store_value, category_col, category_value)
     return {"n_entities": len(group_combinations(raw, group_cols)) if group_cols else 0}
 
 
-@app.post("/api/upload/forecast/bulk/start")
+@app.post("/api/upload/forecast/bulk/start", dependencies=[Depends(current_user)])
 async def api_upload_forecast_bulk_start(
     file: UploadFile = File(...),
     date_col: str = Form(...),
@@ -1376,7 +1390,7 @@ async def api_upload_forecast_bulk_start(
     d'afficher une progression côté client sur un traitement qui peut
     prendre plusieurs minutes.
     """
-    raw = _read_csv_flexible(await file.read())
+    raw = _read_csv_flexible(await read_upload_limited(file))
     for col in (date_col, value_col):
         if col not in raw.columns:
             raise HTTPException(400, "Colonnes introuvables dans le CSV")
@@ -1418,7 +1432,7 @@ async def api_upload_forecast_bulk_start(
     return {"job_id": job_id, "total": len(combos)}
 
 
-@app.get("/api/upload/forecast/bulk/progress/{job_id}")
+@app.get("/api/upload/forecast/bulk/progress/{job_id}", dependencies=[Depends(current_user)])
 def api_upload_forecast_bulk_progress(job_id: str):
     job = bulk_jobs.get(job_id)
     if job is None:
@@ -1432,7 +1446,7 @@ def api_upload_forecast_bulk_progress(job_id: str):
     }
 
 
-@app.get("/api/upload/forecast/bulk/download/{job_id}")
+@app.get("/api/upload/forecast/bulk/download/{job_id}", dependencies=[Depends(current_user)])
 def api_upload_forecast_bulk_download(job_id: str):
     job = bulk_jobs.get(job_id)
     if job is None:
@@ -1474,7 +1488,7 @@ async def api_save_point(
     use_meteo: bool = Form(True),
     user: dict = Depends(current_user),
 ):
-    df = parse_csv(await file.read(), date_col, value_col, store_col, store_value, category_col, category_value)
+    df = parse_csv(await read_upload_limited(file), date_col, value_col, store_col, store_value, category_col, category_value)
     point_id = storage.save_point(user["id"], name, df, location, use_ferie, use_vacances, use_meteo)
     return {"id": point_id, "name": name}
 

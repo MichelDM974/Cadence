@@ -3,6 +3,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+import api
 from api import (
     align_external_exog,
     analyze,
@@ -250,6 +251,16 @@ def test_external_exog_for_entity_rejects_unknown_entity():
 
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _session():
+    """Les endpoints de calcul exigent une session (cf. conftest.connecter).
+    Le client étant partagé par le module, on ouvre la session avant chaque
+    test qui en a besoin."""
+    from conftest import connecter
+
+    connecter(client)
 
 
 def test_exog_validate_reports_full_future_coverage():
@@ -539,3 +550,45 @@ def test_backtest_exog_uses_known_future_values_for_extra_col():
     assert len(exog_future) == 20
     # contrairement au vrai forecast, le backtest connaît déjà ces valeurs (données passées)
     assert (exog_future["promo"].to_numpy() == df["promo"].iloc[-20:].to_numpy()).all()
+
+
+# --- Authentification des endpoints de calcul --------------------------
+
+def test_endpoints_de_calcul_refusent_un_client_sans_session():
+    """Un client anonyme (cookies propres, sans passer par _session) ne doit
+    pouvoir déclencher aucun calcul : ces endpoints étaient ouverts alors
+    que seul l'affichage HTML était protégé côté navigateur."""
+    anonyme = TestClient(app)
+    rows = [(f"2024-01-{d:02d}", 10 + d) for d in range(1, 11)]
+
+    assert anonyme.get("/api/stores").status_code == 401
+    assert anonyme.post(
+        "/api/upload/store-ids",
+        files={"file": ("main.csv", make_csv_bytes(rows), "text/csv")},
+        data={"store_col": "store"},
+    ).status_code == 401
+    assert anonyme.post(
+        "/api/upload/forecast/bulk/count",
+        files={"file": ("main.csv", make_csv_bytes(rows), "text/csv")},
+        data={"date_col": "date", "value_col": "visitors"},
+    ).status_code == 401
+
+
+def test_login_et_setup_restent_accessibles_sans_session():
+    """Le pendant : les routes d'amorçage doivent rester publiques, sinon
+    plus personne ne peut se connecter."""
+    anonyme = TestClient(app)
+    assert anonyme.get("/api/me").status_code == 200
+
+
+def test_upload_trop_volumineux_rejete(monkeypatch):
+    """La borne évite de charger un fichier de plusieurs Go en mémoire avant
+    le moindre contrôle. Limite abaissée ici pour ne pas fabriquer 100 Mo."""
+    monkeypatch.setattr(api, "MAX_UPLOAD_BYTES", 50)
+    rows = [(f"2024-01-{d:02d}", 10 + d) for d in range(1, 11)]
+    resp = client.post(
+        "/api/upload/store-ids",
+        files={"file": ("main.csv", make_csv_bytes(rows), "text/csv")},
+        data={"store_col": "store"},
+    )
+    assert resp.status_code == 413
