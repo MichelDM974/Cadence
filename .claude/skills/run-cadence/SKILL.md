@@ -123,10 +123,11 @@ vraie base. À réserver à un usage manuel : pour tout essai, préférer
   forcément à la version réclamée par le playwright installé.** D'où
   l'`executable_path` explicite du driver, qui prend le chromium en cache
   le plus récent au lieu de laisser playwright chercher le sien.
-- **Le venv local est en Python 3.14, la CI et Docker en 3.12.** Des
-  comportements diffèrent réellement entre les deux (un ajustement qui
-  converge d'un côté et pas de l'autre) : un test vert en local ne
-  garantit pas la CI.
+- **Tout est en Python 3.14** (venv local, CI, image Docker) depuis le
+  08/09/2026. Ça n'a pas toujours été le cas — la CI et Docker étaient en
+  3.12 — et la divergence était réelle : un ajustement SARIMAX convergeait
+  d'un côté et pas de l'autre, si bien qu'un test vert en local ne
+  garantissait pas la CI. Ne pas réintroduire d'écart entre les trois.
 
 ## Dépannage
 

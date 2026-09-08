@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # build-essential : nécessaire pour compiler cmdstan (backend de Prophet) au premier lancement
 # libgomp1 : requis au runtime par LightGBM (OpenMP)

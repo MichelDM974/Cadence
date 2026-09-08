@@ -58,6 +58,10 @@ Et sur *Store Sales - Time Series Forecasting* (54 magasins × 33 catégories, 1
 
 ## Installation
 
+Python 3.14 — même version que l'image Docker et que la CI ; les dépendances
+ne sont pas épinglées, donc l'alignement des interpréteurs est ce qui rend un
+résultat local représentatif.
+
 ```
 cd src
 pip install -r requirements.txt
