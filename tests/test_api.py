@@ -1,3 +1,4 @@
+import io
 import time
 
 import pandas as pd
@@ -800,3 +801,87 @@ def test_forecast_serialisable_meme_si_le_modele_renvoie_des_nan(monkeypatch):
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["prevision"] == [None] * 7
+
+
+# --- Génération en masse : chemin SARIMAX/Prophet (pool de process) ----
+# Ce chemin n'avait aucun test : seul le branchement lightgbm était couvert,
+# alors que c'est ici qu'on forke le pool et qu'on soumet une tâche par
+# entité. C'est aussi le code le plus coûteux de l'app.
+
+def _frame_entites(n_jours, entites):
+    """Saisonnalité hebdo + tendance + une variation qui évite une série
+    parfaitement lisse : celles-ci font diverger l'ajustement SARIMAX selon
+    la version de statsmodels (cf. le bug NaN trouvé par la CI)."""
+    dates = pd.date_range("2024-01-01", periods=n_jours, freq="D")
+    lignes = []
+    for rang, (magasin, famille) in enumerate(entites):
+        for i, d in enumerate(dates):
+            valeur = 50 + rang * 40 + 8 * (i % 7) + 0.1 * i + (3 if i % 5 == 0 else 0)
+            lignes.append(
+                {"date": d.strftime("%Y-%m-%d"), "store_nbr": magasin, "family": famille, "sales": valeur}
+            )
+    return pd.DataFrame(lignes)
+
+
+def _lancer_bulk(csv_bytes, **champs):
+    """Démarre un job et attend sa fin. Poll espacé : un poll serré a déjà
+    rendu un test bulk instable en le faisant concurrencer le thread de
+    travail (cf. journal-de-bord)."""
+    donnees = {"date_col": "date", "value_col": "sales", "store_col": "store_nbr",
+               "category_col": "family", "horizon": "5", **champs}
+    start = client.post(
+        "/api/upload/forecast/bulk/start",
+        files={"file": ("ventes.csv", csv_bytes, "text/csv")},
+        data=donnees,
+    )
+    assert start.status_code == 200, start.text
+    job_id = start.json()["job_id"]
+
+    for _ in range(600):
+        progress = client.get(f"/api/upload/forecast/bulk/progress/{job_id}").json()
+        if progress["status"] != "running":
+            break
+        time.sleep(0.1)
+    return job_id, progress
+
+
+def test_bulk_sarimax_traverse_le_pool_et_produit_un_csv():
+    raw = _frame_entites(60, [("1", "A"), ("2", "B")])
+    job_id, progress = _lancer_bulk(raw.to_csv(index=False).encode(), model="sarimax", include_ci="true")
+    assert progress["status"] == "done", progress
+
+    download = client.get(f"/api/upload/forecast/bulk/download/{job_id}")
+    assert download.status_code == 200
+    df = pd.read_csv(io.StringIO(download.text))
+    assert len(df) == 2 * 5
+    # contrairement à lightgbm, SARIMAX fournit un intervalle de confiance
+    assert {"ic_bas", "ic_haut"} <= set(df.columns)
+    assert set(df["store_nbr"].astype(str)) == {"1", "2"}
+
+
+def test_bulk_sarimax_ne_melange_pas_les_entites():
+    """Chaque entité part dans un process distinct : une erreur d'appariement
+    entre le future rendu et son combo passerait inaperçue sans ça."""
+    raw = _frame_entites(60, [("1", "A"), ("2", "B")])
+    job_id, progress = _lancer_bulk(raw.to_csv(index=False).encode(), model="sarimax")
+    assert progress["status"] == "done", progress
+
+    df = pd.read_csv(io.StringIO(client.get(f"/api/upload/forecast/bulk/download/{job_id}").text))
+    par_entite = df.dropna(subset=["prevision"]).groupby("store_nbr")["prevision"].mean()
+    if len(par_entite) == 2:  # les deux ont convergé
+        # l'entité "2" est construite 40 unités au-dessus de l'entité "1"
+        assert par_entite.loc[2] > par_entite.loc[1]
+
+
+def test_bulk_sarimax_ignore_les_entites_trop_courtes():
+    raw = pd.concat([
+        _frame_entites(60, [("1", "A")]),
+        _frame_entites(10, [("2", "B")]),  # < 21 jours : doit être ignorée
+    ])
+    job_id, progress = _lancer_bulk(raw.to_csv(index=False).encode(), model="sarimax")
+    assert progress["status"] == "done", progress
+    assert progress["skipped"] == 1
+    assert progress["total"] == 2
+
+    df = pd.read_csv(io.StringIO(client.get(f"/api/upload/forecast/bulk/download/{job_id}").text))
+    assert set(df["store_nbr"].astype(str)) == {"1"}
