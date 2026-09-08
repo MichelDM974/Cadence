@@ -885,3 +885,21 @@ def test_bulk_sarimax_ignore_les_entites_trop_courtes():
 
     df = pd.read_csv(io.StringIO(client.get(f"/api/upload/forecast/bulk/download/{job_id}").text))
     assert set(df["store_nbr"].astype(str)) == {"1"}
+
+
+def test_bulk_sarimax_draine_au_dela_du_plafond(monkeypatch):
+    """Avec plus d'entités que MAX_BULK_EN_VOL, le drainage en cours de
+    soumission entre en jeu — chemin qu'aucun test à deux entités ne
+    touche. Plafond abaissé pour ne pas fabriquer 64 entités."""
+    monkeypatch.setattr(api, "MAX_BULK_EN_VOL", 2)
+    entites = [(str(i), "A") for i in range(1, 6)]  # 5 entités > plafond de 2
+    raw = _frame_entites(45, entites)
+
+    job_id, progress = _lancer_bulk(raw.to_csv(index=False).encode(), model="sarimax")
+    assert progress["status"] == "done", progress
+    assert progress["total"] == 5
+    assert progress["processed"] == 5  # aucune entité perdue par le drainage
+
+    df = pd.read_csv(io.StringIO(client.get(f"/api/upload/forecast/bulk/download/{job_id}").text))
+    assert set(df["store_nbr"].astype(str)) == {"1", "2", "3", "4", "5"}
+    assert len(df) == 5 * 5  # 5 entités x horizon 5, aucun doublon

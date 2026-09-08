@@ -1205,6 +1205,38 @@ async def api_upload_autotune(
     )
 
 
+# Tâches soumises au pool sans attendre de résultat. Assez haut pour que les
+# workers ne manquent jamais de travail, assez bas pour ne pas garder en file
+# les données sérialisées de milliers d'entités.
+MAX_BULK_EN_VOL = 64
+
+
+def _collecter_resultat(future, combo, job, rows, group_cols, include_ci) -> int:
+    """Récolte une prévision terminée dans `rows`. Renvoie 1 si l'entité a
+    échoué (donc à compter comme ignorée), 0 sinon. Extrait de la boucle
+    parce que le drainage se fait maintenant à deux endroits — en cours de
+    soumission quand le plafond est atteint, puis pour le reliquat."""
+    try:
+        result = future.result()
+    except Exception:
+        job["processed"] += 1
+        return 1
+
+    for date, prevision, ic_bas, ic_haut in zip(
+        result["dates"], result["prevision"], result["ic_bas"], result["ic_haut"]
+    ):
+        row = dict(zip(group_cols, combo))
+        row["date"] = date
+        row["prevision"] = prevision
+        if include_ci:
+            row["ic_bas"] = ic_bas
+            row["ic_haut"] = ic_haut
+        rows.append(row)
+
+    job["processed"] += 1
+    return 0
+
+
 def _run_bulk_forecast(
     job_id: str,
     raw: pd.DataFrame,
@@ -1355,27 +1387,20 @@ def _run_bulk_forecast(
                 )
                 futures[future] = combo
 
+                # Plafond de tâches en vol : submit() sérialise ses arguments
+                # immédiatement, donc tout soumettre d'un coup mettait en file
+                # les 1782 DataFrames (plus leurs exogènes) avant le premier
+                # résultat. On draine dès que le plafond est atteint.
+                if len(futures) >= MAX_BULK_EN_VOL:
+                    termine = next(as_completed(futures))
+                    skipped += _collecter_resultat(
+                        termine, futures.pop(termine), job, rows, group_cols, include_ci
+                    )
+
             for future in as_completed(futures):
-                combo = futures[future]
-                try:
-                    result = future.result()
-                except Exception:
-                    skipped += 1
-                    job["processed"] += 1
-                    continue
-
-                for date, prevision, ic_bas, ic_haut in zip(
-                    result["dates"], result["prevision"], result["ic_bas"], result["ic_haut"]
-                ):
-                    row = dict(zip(group_cols, combo))
-                    row["date"] = date
-                    row["prevision"] = prevision
-                    if include_ci:
-                        row["ic_bas"] = ic_bas
-                        row["ic_haut"] = ic_haut
-                    rows.append(row)
-
-                job["processed"] += 1
+                skipped += _collecter_resultat(
+                    future, futures[future], job, rows, group_cols, include_ci
+                )
 
         if not rows:
             job["status"] = "error"
