@@ -903,3 +903,35 @@ def test_bulk_sarimax_draine_au_dela_du_plafond(monkeypatch):
     df = pd.read_csv(io.StringIO(client.get(f"/api/upload/forecast/bulk/download/{job_id}").text))
     assert set(df["store_nbr"].astype(str)) == {"1", "2", "3", "4", "5"}
     assert len(df) == 5 * 5  # 5 entités x horizon 5, aucun doublon
+
+
+# --- Cookie de session : Secure conditionnel --------------------------
+
+def test_cookie_https_only_lit_la_variable(monkeypatch):
+    monkeypatch.delenv("CADENCE_HTTPS", raising=False)
+    assert api.cookie_https_only() is False
+    for valeur in ("1", "true", "YES", " true "):
+        monkeypatch.setenv("CADENCE_HTTPS", valeur)
+        assert api.cookie_https_only() is True, valeur
+    for valeur in ("0", "", "non"):
+        monkeypatch.setenv("CADENCE_HTTPS", valeur)
+        assert api.cookie_https_only() is False, valeur
+
+
+def test_cookie_de_session_non_secure_par_defaut():
+    """En local l'app est servie en http:// : un cookie Secure ne serait
+    jamais renvoyé par le navigateur et la connexion serait cassée. C'est
+    la raison pour laquelle https_only n'est pas activé d'office."""
+    # le compte est déjà créé par la fixture _session : on se connecte,
+    # ce qui pose le même cookie de session
+    anonyme = TestClient(app)
+    resp = anonyme.post("/api/login", data={"username": "testeur", "password": "motdepasse"})
+    assert resp.status_code == 200, resp.text
+    # Starlette écrit les attributs en minuscules ("httponly; samesite=lax") :
+    # comparer sans la casse, sinon l'absence de "Secure" serait vérifiée par
+    # accident et un "secure" bien présent passerait inaperçu.
+    entete = resp.headers.get("set-cookie", "").lower()
+    assert "session=" in entete
+    assert "secure" not in entete
+    assert "httponly" in entete  # posé d'office par Starlette
+    assert "samesite=lax" in entete  # défaut conservé : couvre l'essentiel du CSRF

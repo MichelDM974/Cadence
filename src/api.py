@@ -42,7 +42,24 @@ logging.getLogger("prophet").setLevel(logging.WARNING)
 
 app = FastAPI(title="Cadence API")
 storage.init_db()
-app.add_middleware(SessionMiddleware, secret_key=storage.session_secret())
+
+
+def cookie_https_only() -> bool:
+    """Le cookie de session doit-il porter l'attribut Secure ?
+
+    Secure empêche le navigateur d'envoyer le cookie sur http://, ce qui
+    protège la session d'une interception — mais casse aussi l'usage local,
+    où l'app est servie en clair sur localhost. D'où le pilotage par
+    CADENCE_HTTPS=1, à poser le jour d'un déploiement derrière TLS et pas
+    avant. (`same_site="lax"`, le défaut de Starlette, est conservé : il
+    couvre déjà l'essentiel du risque CSRF.)
+    """
+    return os.environ.get("CADENCE_HTTPS", "").strip().lower() in ("1", "true", "yes")
+
+
+app.add_middleware(
+    SessionMiddleware, secret_key=storage.session_secret(), https_only=cookie_https_only()
+)
 
 STATIC_DIR = Path(__file__).parent / "static"
 MIN_BACKTEST_TRAIN_DAYS = 90

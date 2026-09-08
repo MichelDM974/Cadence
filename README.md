@@ -70,3 +70,10 @@ Tests (aussi exécutés en CI sur chaque push/PR vers `main`) :
 pip install -r requirements-dev.txt
 pytest tests/ -v
 ```
+
+### Déploiement derrière HTTPS
+
+Poser `CADENCE_HTTPS=1` : le cookie de session prend l'attribut `Secure` et
+n'est plus transmis en clair. À ne pas activer en local, où l'app est servie
+sur `http://` — le navigateur cesserait d'envoyer le cookie et la connexion
+deviendrait impossible.
