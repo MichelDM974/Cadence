@@ -12,6 +12,10 @@
   --muted: #a8a69d;
   --accent: #e07b46;
   --accent-soft: rgba(224, 123, 70, 0.16);
+  /* Titre « or poli » : reflets clairs, bande sombre au milieu (lingot), dans la
+     teinte de --accent (valeurs dérivées en dur, comme le reste de la palette). */
+  --title-shine: linear-gradient(180deg, #f9e5da 0%, #eeb699 28%, #e07b46 48%,
+    #7b4426 52%, #e07b46 70%, #ecb090 100%);
   --accent-text: #1d1c19;
   --disabled-bg: #46443d;
   --shadow: rgba(0, 0, 0, 0.4);
@@ -365,12 +369,24 @@ header {
   border-color: var(--muted);
 }
 
-header h1 {
-  margin: 0;
-  font-size: 2rem;
-  font-weight: 700;
+header h1,
+.auth-card h1 {
+  margin: 0 0 10px;
+  font-size: 2.5rem;
+  font-weight: 800;
   letter-spacing: -0.02em;
-  color: var(--accent);
+  color: var(--accent);  /* repli si le texte ne peut pas prendre le dégradé */
+  /* Reflet miroir sous le titre (Chrome, Edge, Safari ; ignoré ailleurs). */
+  -webkit-box-reflect: below -8px linear-gradient(transparent 45%, rgba(0, 0, 0, 0.4));
+}
+
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  header h1, .auth-card h1 {
+    background-image: var(--title-shine);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
 }
 
 header .tagline {
@@ -988,11 +1004,6 @@ th, td {
   width: 100%;
   max-width: 360px;
   margin: 16px;
-}
-
-.auth-card h1 {
-  color: var(--accent);
-  margin: 0 0 2px;
 }
 
 .auth-card .tagline {
