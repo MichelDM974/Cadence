@@ -12,10 +12,6 @@
   --muted: #a8a69d;
   --accent: #e07b46;
   --accent-soft: rgba(224, 123, 70, 0.16);
-  /* Titre « or poli » : éclats clairs, bande sombre au milieu (lingot), dans la
-     teinte de --accent (valeurs dérivées en dur, comme le reste de la palette). */
-  --title-shine: linear-gradient(180deg, #f9e5da 0%, #eeb699 28%, #e07b46 48%,
-    #7b4426 52%, #e07b46 70%, #ecb090 100%);
   --accent-text: #1d1c19;
   --disabled-bg: #46443d;
   --shadow: rgba(0, 0, 0, 0.4);
@@ -375,16 +371,7 @@ header h1,
   font-size: 2.5rem;
   font-weight: 800;
   letter-spacing: -0.02em;
-  color: var(--accent);  /* repli si le texte ne peut pas prendre le dégradé */
-}
-
-@supports ((-webkit-background-clip: text) or (background-clip: text)) {
-  header h1, .auth-card h1 {
-    background-image: var(--title-shine);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-  }
+  color: var(--accent);
 }
 
 header .tagline {
