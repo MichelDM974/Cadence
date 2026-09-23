@@ -58,20 +58,19 @@ Et sur *Store Sales - Time Series Forecasting* (54 magasins × 33 catégories, 1
 
 ## Installation
 
-Python 3.14 — même version que l'image Docker et que la CI ; les dépendances
-ne sont pas épinglées, donc l'alignement des interpréteurs est ce qui rend un
-résultat local représentatif.
+Python 3.14 — même version que l'image Docker et que la CI. Les versions de
+toutes les dépendances sont figées dans `constraints.txt`, appliqué partout
+avec `-c` : un résultat local est ainsi représentatif de la CI et de l'image.
 
 ```
-cd src
-pip install -r requirements.txt
-uvicorn api:app
+pip install -r requirements.txt -c constraints.txt
+cd src && uvicorn api:app
 ```
 
 Tests (aussi exécutés en CI sur chaque push/PR vers `main`) :
 
 ```
-pip install -r requirements-dev.txt
+pip install -r requirements-dev.txt -c constraints.txt
 pytest tests/ -v
 ```
 

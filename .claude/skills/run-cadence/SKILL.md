@@ -23,7 +23,7 @@ Le venv du projet suffit pour tout sauf les captures d'écran :
 S'il manque (machine neuve) :
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt -c constraints.txt
 ```
 
 ## Lancer (chemin agent)
@@ -133,7 +133,7 @@ vraie base. À réserver à un usage manuel : pour tout essai, préférer
 
 | Symptôme | Cause et correctif |
 |---|---|
-| `ModuleNotFoundError: itsdangerous` | `SessionMiddleware` en dépend et fastapi ne le tire pas. Il est dans `requirements.txt` ; réinstaller avec `.venv/bin/pip install -r requirements-dev.txt`. |
+| `ModuleNotFoundError: itsdangerous` | `SessionMiddleware` en dépend et fastapi ne le tire pas. Il est dans `requirements.txt` ; réinstaller avec `.venv/bin/pip install -r requirements-dev.txt -c constraints.txt`. |
 | `smoke` : `ECHEC : rien ne répond` | `serve` n'est pas lancé, ou pas sur le même `--port`. |
 | `ui` : `Executable doesn't exist at .../chromium_headless_shell-XXXX` | Playwright cherche sa version à lui. Le driver contourne via `executable_path` ; si le cache est vide, `playwright install chromium`. |
 | `/api/setup` renvoie 403 | Un compte existe déjà sur cette base. Se connecter via `/api/login`, ou repartir d'un `--data` neuf. |
