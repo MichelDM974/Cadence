@@ -95,7 +95,7 @@ vraie base. À réserver à un usage manuel : pour tout essai, préférer
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest -q      # 108 tests, ~30 s
+.venv/bin/python -m pytest -q      # ~30 s
 ```
 
 ## Pièges
