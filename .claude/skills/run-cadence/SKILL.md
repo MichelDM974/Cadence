@@ -28,31 +28,17 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt -c constr
 
 ## Lancer (chemin agent)
 
-Deux terminaux. D'abord le serveur, qui reste au premier plan :
+Serveur (bloquant : le lancer en arrière-plan), puis vérification de
+l'API :
 
 ```bash
 .venv/bin/python .claude/skills/run-cadence/driver.py serve --port 8011 --data /tmp/cadence-driver
-```
-
-Puis, dans un second terminal, la vérification de l'API :
-
-```bash
 .venv/bin/python .claude/skills/run-cadence/driver.py smoke --port 8011
 ```
 
-Sortie obtenue :
-
-```
-  [ok ] endpoint de calcul sans session -> 401 (attendu 401)
-  [ok ] création/connexion du compte -> 200 (attendu 200) driver
-  [ok ] session active -> 200 (attendu 200) driver
-  [ok ] décomposition d'un CSV -> 200 (attendu 200)
-  [ok ] prévision SARIMAX -> 200 (attendu 200) 7 jours, 1er = 100.0
-
-smoke : OK
-```
-
-`smoke` n'utilise que la stdlib : aucune dépendance à installer.
+Sortie attendue : une ligne `[ok ]` par vérification (session, compte,
+décomposition, prévision), puis `smoke : OK`. `smoke` n'utilise que la
+stdlib : aucune dépendance à installer.
 
 ## Captures d'écran et parcours dans l'interface
 
@@ -67,17 +53,8 @@ python3 -m venv /tmp/pwenv && /tmp/pwenv/bin/pip install playwright
 /tmp/pwenv/bin/python .claude/skills/run-cadence/driver.py ui --port 8011 --out /tmp/cadence-captures
 ```
 
-Sortie obtenue :
-
-```
-  connecté en tant que 'driver'
-  analyse effectuée : 8 graphes rendus
-  page théorie : 7 formules rendues par KaTeX
-  captures dans /tmp/cadence-captures
-  erreurs JS : aucune
-```
-
-Les captures atterrissent dans `--out` : `01-accueil.png`,
+Sortie attendue : connexion, nombre de graphes et de formules KaTeX rendus,
+puis `erreurs JS : aucune`. Les captures atterrissent dans `--out` : `01-accueil.png`,
 `02-analyse.png`, `03-theorie.png`, `04-modeles.png`. **Les regarder** —
 une image vide ou une page d'erreur veut dire que le lancement a échoué
 malgré un code de sortie à 0.
@@ -123,11 +100,6 @@ vraie base. À réserver à un usage manuel : pour tout essai, préférer
   forcément à la version réclamée par le playwright installé.** D'où
   l'`executable_path` explicite du driver, qui prend le chromium en cache
   le plus récent au lieu de laisser playwright chercher le sien.
-- **Tout est en Python 3.14** (venv local, CI, image Docker) depuis le
-  08/09/2026. Ça n'a pas toujours été le cas — la CI et Docker étaient en
-  3.12 — et la divergence était réelle : un ajustement SARIMAX convergeait
-  d'un côté et pas de l'autre, si bien qu'un test vert en local ne
-  garantissait pas la CI. Ne pas réintroduire d'écart entre les trois.
 
 ## Dépannage
 
