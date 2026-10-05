@@ -26,6 +26,7 @@ from statsmodels.tsa.seasonal import STL
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 
 import exogenous
+import kaggle_competition as kc
 import lightgbm_forecast
 import storage
 from decompose_prototype import (
@@ -1254,8 +1255,8 @@ def _collecter_resultat(future, combo, job, rows, group_cols, include_ci) -> int
     return 0
 
 
-def _run_bulk_forecast(
-    job_id: str,
+def bulk_forecast_rows(
+    job: dict,
     raw: pd.DataFrame,
     date_col: str,
     value_col: str,
@@ -1276,148 +1277,162 @@ def _run_bulk_forecast(
     exog_store_col: str | None,
     exog_category_col: str | None,
     model_params: dict[str, dict],
+) -> tuple[list[dict], int]:
+    """Cœur de la prévision groupée : une prévision par entité (combinaisons
+    de `job["combos"]`), avancement reporté dans `job["processed"]`. Renvoie
+    (lignes prévues, nombre d'entités ignorées). Partagé par la génération
+    en masse (_run_bulk_forecast) et la page Kaggle (_run_kaggle_job).
+    """
+    if model not in BULK_MODELS:
+        raise HTTPException(400, f"Modèle inconnu : {model}")
+
+    loc = geocode_or_400(location) if location else None
+    columns = exog_columns(use_ferie, use_vacances, use_meteo)
+    exog_cache: dict[tuple, pd.DataFrame] = {}
+
+    def location_exog_cached(dates: pd.DatetimeIndex) -> pd.DataFrame:
+        key = (dates.min(), dates.max(), len(dates))
+        if key not in exog_cache:
+            exog_cache[key] = exogenous.location_exog(loc, dates)
+        return exog_cache[key]
+
+    # Si le fichier exogène externe a une valeur par entité (magasin
+    # et/ou catégorie, ex. onpromotion) plutôt qu'une seule série
+    # globale (ex. prix du pétrole) : le regrouper une seule fois, même
+    # principe que group_indices ci-dessous pour le fichier principal.
+    exog_group_cols = [c for c in (exog_store_col, exog_category_col) if c]
+    external_by_entity = (
+        _group_external_exog(external_exog, exog_date_col, exog_value_cols, exog_group_cols)
+        if external_exog is not None and exog_group_cols
+        else None
+    )
+
+    # Dimension fixée (pas parcourue, une seule valeur) : constante après
+    # le filtrage de resolve_bulk_groups, lisible directement sur `raw`.
+    fixed_store_value = raw[store_col].iloc[0] if store_col and store_col not in group_cols and len(raw) else None
+    fixed_category_value = (
+        raw[category_col].iloc[0] if category_col and category_col not in group_cols and len(raw) else None
+    )
+
+    combos = job["combos"]
+    rows = []
+    skipped = 0
+
+    # Regroupe les lignes par combinaison en un seul passage (un
+    # groupby) plutôt que de refiltrer tout le fichier à chaque entité :
+    # sur un gros CSV (des millions de lignes), refaire un astype(str) +
+    # comparaison par entité était le vrai goulot d'étranglement, bien
+    # avant l'ajustement des modèles.
+    str_cols = {col: raw[col].astype(str) for col in group_cols}
+    if len(group_cols) == 1:
+        group_indices = {(key,): idx for key, idx in raw.groupby(str_cols[group_cols[0]]).groups.items()}
+    else:
+        group_indices = dict(raw.groupby([str_cols[c] for c in group_cols]).groups.items())
+
+    if model == "lightgbm":
+        # Modèle global : un seul entraînement sur toutes les entités à
+        # la fois plutôt qu'un fit indépendant par entité — pas de pool
+        # de process (LightGBM parallélise nativement), pas d'intervalle
+        # de confiance en v1 (voir lightgbm_forecast.py).
+        include_ci = False
+
+        def on_progress(h: int, total_horizon: int) -> None:
+            job["processed"] = round(h / total_horizon * len(combos))
+
+        lgb_settings = dict(model_params.get("lightgbm") or {})
+        lgb_num_boost_round = lgb_settings.pop("num_boost_round", None)
+
+        rows, skipped_combos = lightgbm_forecast.run_bulk_lightgbm_forecast(
+            raw, date_col, value_col, group_cols, horizon, combos, group_indices, extra_cols,
+            location_exog_cached if loc else None, columns if loc else [],
+            external_by_entity, external_exog, fixed_store_value, fixed_category_value,
+            store_col, category_col, exog_store_col, exog_category_col,
+            _daily_series, align_external_exog, on_progress,
+            lgb_settings or None, lgb_num_boost_round,
+        )
+        skipped = len(skipped_combos)
+        job["processed"] = len(combos)
+    else:
+        # Chaque entité est indépendante : on ne fait dans cette boucle
+        # que du découpage de données (bon marché) et on envoie
+        # l'ajustement du modèle — la partie coûteuse — aux process du
+        # pool, en parallèle.
+        executor = get_bulk_executor()
+        futures = {}
+        for combo in combos:
+            idx = group_indices.get(combo)
+            if idx is None:
+                skipped += 1
+                job["processed"] += 1
+                continue
+            subset = raw.loc[idx]
+
+            try:
+                df = _daily_series(subset, date_col, value_col, extra_cols)
+            except HTTPException:
+                skipped += 1
+                job["processed"] += 1
+                continue
+
+            future_dates = pd.date_range(df.index.max() + pd.Timedelta(days=1), periods=horizon, freq="D")
+            hist_parts, future_parts = [], []
+            if loc and columns:
+                hist_parts.append(location_exog_cached(df.index)[columns])
+                future_parts.append(location_exog_cached(future_dates)[columns])
+            if extra_cols:
+                hist_parts.append(df[extra_cols])
+                last_values = df[extra_cols].iloc[-1]
+                future_parts.append(pd.DataFrame([last_values] * horizon, index=future_dates))
+
+            entity_exog = None
+            if external_by_entity is not None:
+                store_val = combo[group_cols.index(store_col)] if store_col in group_cols else fixed_store_value
+                category_val = (
+                    combo[group_cols.index(category_col)] if category_col in group_cols else fixed_category_value
+                )
+                key = tuple(v for c, v in ((exog_store_col, store_val), (exog_category_col, category_val)) if c)
+                entity_exog = external_by_entity.get(key)
+            elif external_exog is not None:
+                entity_exog = external_exog
+
+            if entity_exog is not None:
+                hist_parts.append(align_external_exog(entity_exog, df.index))
+                future_parts.append(align_external_exog(entity_exog, future_dates))
+
+            exog_hist = pd.concat(hist_parts, axis=1) if hist_parts else None
+            exog_future = pd.concat(future_parts, axis=1) if future_parts else None
+
+            future = executor.submit(
+                forecast, df, horizon, exog_hist=exog_hist, exog_future=exog_future, model=model,
+                model_params=model_params.get(model),
+            )
+            futures[future] = combo
+
+            # Plafond de tâches en vol : submit() sérialise ses arguments
+            # immédiatement, donc tout soumettre d'un coup mettait en file
+            # les 1782 DataFrames (plus leurs exogènes) avant le premier
+            # résultat. On draine dès que le plafond est atteint.
+            if len(futures) >= MAX_BULK_EN_VOL:
+                termine = next(as_completed(futures))
+                skipped += _collecter_resultat(
+                    termine, futures.pop(termine), job, rows, group_cols, include_ci
+                )
+
+        for future in as_completed(futures):
+            skipped += _collecter_resultat(
+                future, futures[future], job, rows, group_cols, include_ci
+            )
+
+    return rows, skipped
+
+
+def _run_bulk_forecast(
+    job_id: str, raw: pd.DataFrame, date_col: str, value_col: str, group_cols: list[str], *other_args
 ) -> None:
     job = bulk_jobs[job_id]
     try:
-        if model not in BULK_MODELS:
-            raise HTTPException(400, f"Modèle inconnu : {model}")
-
-        loc = geocode_or_400(location) if location else None
-        columns = exog_columns(use_ferie, use_vacances, use_meteo)
-        exog_cache: dict[tuple, pd.DataFrame] = {}
-
-        def location_exog_cached(dates: pd.DatetimeIndex) -> pd.DataFrame:
-            key = (dates.min(), dates.max(), len(dates))
-            if key not in exog_cache:
-                exog_cache[key] = exogenous.location_exog(loc, dates)
-            return exog_cache[key]
-
-        # Si le fichier exogène externe a une valeur par entité (magasin
-        # et/ou catégorie, ex. onpromotion) plutôt qu'une seule série
-        # globale (ex. prix du pétrole) : le regrouper une seule fois, même
-        # principe que group_indices ci-dessous pour le fichier principal.
-        exog_group_cols = [c for c in (exog_store_col, exog_category_col) if c]
-        external_by_entity = (
-            _group_external_exog(external_exog, exog_date_col, exog_value_cols, exog_group_cols)
-            if external_exog is not None and exog_group_cols
-            else None
-        )
-
-        # Dimension fixée (pas parcourue, une seule valeur) : constante après
-        # le filtrage de resolve_bulk_groups, lisible directement sur `raw`.
-        fixed_store_value = raw[store_col].iloc[0] if store_col and store_col not in group_cols and len(raw) else None
-        fixed_category_value = (
-            raw[category_col].iloc[0] if category_col and category_col not in group_cols and len(raw) else None
-        )
-
+        rows, skipped = bulk_forecast_rows(job, raw, date_col, value_col, group_cols, *other_args)
         combos = job["combos"]
-        rows = []
-        skipped = 0
-
-        # Regroupe les lignes par combinaison en un seul passage (un
-        # groupby) plutôt que de refiltrer tout le fichier à chaque entité :
-        # sur un gros CSV (des millions de lignes), refaire un astype(str) +
-        # comparaison par entité était le vrai goulot d'étranglement, bien
-        # avant l'ajustement des modèles.
-        str_cols = {col: raw[col].astype(str) for col in group_cols}
-        if len(group_cols) == 1:
-            group_indices = {(key,): idx for key, idx in raw.groupby(str_cols[group_cols[0]]).groups.items()}
-        else:
-            group_indices = dict(raw.groupby([str_cols[c] for c in group_cols]).groups.items())
-
-        if model == "lightgbm":
-            # Modèle global : un seul entraînement sur toutes les entités à
-            # la fois plutôt qu'un fit indépendant par entité — pas de pool
-            # de process (LightGBM parallélise nativement), pas d'intervalle
-            # de confiance en v1 (voir lightgbm_forecast.py).
-            include_ci = False
-
-            def on_progress(h: int, total_horizon: int) -> None:
-                job["processed"] = round(h / total_horizon * len(combos))
-
-            lgb_settings = dict(model_params.get("lightgbm") or {})
-            lgb_num_boost_round = lgb_settings.pop("num_boost_round", None)
-
-            rows, skipped_combos = lightgbm_forecast.run_bulk_lightgbm_forecast(
-                raw, date_col, value_col, group_cols, horizon, combos, group_indices, extra_cols,
-                location_exog_cached if loc else None, columns if loc else [],
-                external_by_entity, external_exog, fixed_store_value, fixed_category_value,
-                store_col, category_col, exog_store_col, exog_category_col,
-                _daily_series, align_external_exog, on_progress,
-                lgb_settings or None, lgb_num_boost_round,
-            )
-            skipped = len(skipped_combos)
-            job["processed"] = len(combos)
-        else:
-            # Chaque entité est indépendante : on ne fait dans cette boucle
-            # que du découpage de données (bon marché) et on envoie
-            # l'ajustement du modèle — la partie coûteuse — aux process du
-            # pool, en parallèle.
-            executor = get_bulk_executor()
-            futures = {}
-            for combo in combos:
-                idx = group_indices.get(combo)
-                if idx is None:
-                    skipped += 1
-                    job["processed"] += 1
-                    continue
-                subset = raw.loc[idx]
-
-                try:
-                    df = _daily_series(subset, date_col, value_col, extra_cols)
-                except HTTPException:
-                    skipped += 1
-                    job["processed"] += 1
-                    continue
-
-                future_dates = pd.date_range(df.index.max() + pd.Timedelta(days=1), periods=horizon, freq="D")
-                hist_parts, future_parts = [], []
-                if loc and columns:
-                    hist_parts.append(location_exog_cached(df.index)[columns])
-                    future_parts.append(location_exog_cached(future_dates)[columns])
-                if extra_cols:
-                    hist_parts.append(df[extra_cols])
-                    last_values = df[extra_cols].iloc[-1]
-                    future_parts.append(pd.DataFrame([last_values] * horizon, index=future_dates))
-
-                entity_exog = None
-                if external_by_entity is not None:
-                    store_val = combo[group_cols.index(store_col)] if store_col in group_cols else fixed_store_value
-                    category_val = (
-                        combo[group_cols.index(category_col)] if category_col in group_cols else fixed_category_value
-                    )
-                    key = tuple(v for c, v in ((exog_store_col, store_val), (exog_category_col, category_val)) if c)
-                    entity_exog = external_by_entity.get(key)
-                elif external_exog is not None:
-                    entity_exog = external_exog
-
-                if entity_exog is not None:
-                    hist_parts.append(align_external_exog(entity_exog, df.index))
-                    future_parts.append(align_external_exog(entity_exog, future_dates))
-
-                exog_hist = pd.concat(hist_parts, axis=1) if hist_parts else None
-                exog_future = pd.concat(future_parts, axis=1) if future_parts else None
-
-                future = executor.submit(
-                    forecast, df, horizon, exog_hist=exog_hist, exog_future=exog_future, model=model,
-                    model_params=model_params.get(model),
-                )
-                futures[future] = combo
-
-                # Plafond de tâches en vol : submit() sérialise ses arguments
-                # immédiatement, donc tout soumettre d'un coup mettait en file
-                # les 1782 DataFrames (plus leurs exogènes) avant le premier
-                # résultat. On draine dès que le plafond est atteint.
-                if len(futures) >= MAX_BULK_EN_VOL:
-                    termine = next(as_completed(futures))
-                    skipped += _collecter_resultat(
-                        termine, futures.pop(termine), job, rows, group_cols, include_ci
-                    )
-
-            for future in as_completed(futures):
-                skipped += _collecter_resultat(
-                    future, futures[future], job, rows, group_cols, include_ci
-                )
 
         if not rows:
             job["status"] = "error"
@@ -1714,6 +1729,279 @@ def api_point_autotune(
         point["df"], horizon, exog_hist=exog_hist, exog_future=exog_future,
         model_params=parse_model_params(model_params),
     )
+
+
+# ---------------------------------------------------------------------------
+# Page Kaggle : train + test d'une compétition de séries temporelles ->
+# backtest local ou fichier de soumission, chaque essai consigné en base.
+# ---------------------------------------------------------------------------
+
+# Les jeux Kaggle dépassent souvent la limite des imports de caisse (train de
+# *Store Sales* : ~120 Mo) ; .zip/.gz acceptés tels que téléchargés.
+KAGGLE_MAX_UPLOAD_BYTES = 500 * 1024 * 1024
+KAGGLE_MODES = {"backtest", "submission"}
+
+
+async def read_kaggle_table(file: UploadFile) -> pd.DataFrame:
+    content = await file.read(KAGGLE_MAX_UPLOAD_BYTES + 1)
+    if len(content) > KAGGLE_MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"Fichier trop volumineux (limite {KAGGLE_MAX_UPLOAD_BYTES // (1024 * 1024)} Mo)")
+    try:
+        content = kc.decompress_upload(content, file.filename)
+    except (ValueError, OSError, EOFError) as exc:
+        raise HTTPException(400, f"{file.filename} : archive illisible ({exc})")
+    return _read_csv_flexible(content)
+
+
+def kaggle_job_or_404(job_id: str, user: dict) -> dict:
+    job = bulk_jobs.get(job_id)
+    if job is None or job.get("owner_id") != user["id"]:
+        raise HTTPException(404, "Job introuvable")
+    return job
+
+
+@app.post("/api/kaggle/inspect")
+async def api_kaggle_inspect(
+    train_file: UploadFile = File(...),
+    test_file: UploadFile = File(...),
+    user: dict = Depends(current_user),
+):
+    """Colonnes des deux fichiers et correspondance proposée par défaut."""
+    train = await read_kaggle_table(train_file)
+    test = await read_kaggle_table(test_file)
+    return {
+        "train": {"columns": list(map(str, train.columns)), "n_rows": len(train)},
+        "test": {"columns": list(map(str, test.columns)), "n_rows": len(test)},
+        "suggestion": kc.suggest_mapping(train, test),
+    }
+
+
+def _kaggle_forecast_rows(
+    job: dict, history: pd.DataFrame, spec: kc.CompetitionSpec, horizon: int, model: str,
+    model_params: dict, exog_long: pd.DataFrame | None, entities: pd.DataFrame,
+) -> list[dict]:
+    raw = history.copy()
+    raw[spec.date_col] = raw[spec.date_col].dt.strftime("%Y-%m-%d")
+    group_cols = list(spec.entity_cols)
+    # LightGBM apprend de toutes les entités (plus de signal pour le modèle
+    # global) ; SARIMAX/Prophet n'ajustent que celles à rendre.
+    if model == "lightgbm":
+        combos = group_combinations(raw, group_cols)
+    else:
+        combos = [tuple(r) for r in entities[group_cols].itertuples(index=False)]
+    job["combos"] = combos
+    job["total"] = len(combos)
+    job["processed"] = 0
+
+    store_col = group_cols[0]
+    category_col = group_cols[1] if len(group_cols) > 1 else None
+    rows, _ = bulk_forecast_rows(
+        job, raw, spec.date_col, spec.target_col, group_cols, horizon, model, False,
+        None, False, False, False, [], exog_long,
+        store_col, category_col, "date", list(spec.exog_cols),
+        store_col if exog_long is not None else None,
+        category_col if exog_long is not None else None,
+        model_params,
+    )
+    return rows
+
+
+def _run_kaggle_job(
+    job_id: str, train_raw: pd.DataFrame, test_raw: pd.DataFrame, spec: kc.CompetitionSpec,
+    mode: str, model: str, model_params: dict, competition: str, owner_id: int, config: dict,
+) -> None:
+    job = bulk_jobs[job_id]
+    try:
+        try:
+            train = kc.prepare_train(train_raw, spec)
+            keys = kc.submission_keys(test_raw, spec)
+            horizon, scored_days = kc.horizon_days(train, spec, keys)
+            exog_long = kc.exog_long_frame(train, test_raw, keys, spec)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        del train_raw, test_raw
+
+        entities = keys[spec.entity_cols].drop_duplicates()
+        clip_zero = bool(train[spec.target_col].min() >= 0)
+
+        if mode == "backtest":
+            try:
+                history, truth = kc.backtest_split(train, spec, horizon, scored_days)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc))
+            # Kaggle ne note que les entités du test : idem en local.
+            targets = truth.merge(entities, on=spec.entity_cols)
+            if targets.empty:
+                raise HTTPException(400, "Aucune entité du test n'a d'historique sur la fenêtre de backtest")
+        else:
+            history, targets = train, keys
+
+        history = kc.pad_to(history, spec, history[spec.date_col].max())
+        rows = _kaggle_forecast_rows(job, history, spec, horizon, model, model_params, exog_long, entities)
+        preds = kc.predictions_frame(rows, spec)
+        values, n_fallback = kc.attach_predictions(targets, preds, history, spec, clip_zero)
+
+        scores = None
+        if mode == "backtest":
+            actual = targets["actual"].to_numpy()
+            scores = {
+                "model": kc.compute_metrics(actual, values.to_numpy()),
+                "naive": kc.compute_metrics(actual, kc.seasonal_naive(history, targets, spec).to_numpy()),
+                "scored_days": scored_days,
+                "n_rows": len(targets),
+            }
+        else:
+            job["csv"] = kc.submission_csv(keys, values, spec)
+
+        run_id = storage.save_kaggle_run(
+            owner_id, competition, mode, model, config, horizon, len(entities), n_fallback, scores
+        )
+        job["result"] = {
+            "run_id": run_id, "mode": mode, "horizon": horizon, "scored_days": scored_days,
+            "n_entities": len(entities), "n_rows": len(targets), "n_fallback": n_fallback, "scores": scores,
+        }
+        job["status"] = "done"
+    except HTTPException as exc:
+        job["status"] = "error"
+        job["error"] = exc.detail
+    except Exception as exc:
+        job["status"] = "error"
+        job["error"] = str(exc)
+
+
+@app.post("/api/kaggle/start")
+async def api_kaggle_start(
+    train_file: UploadFile = File(...),
+    test_file: UploadFile = File(...),
+    competition: str = Form(...),
+    mode: str = Form("backtest"),
+    model: str = Form("lightgbm"),
+    model_params: str | None = Form(None),
+    date_col: str = Form(...),
+    target_col: str = Form(...),
+    entity_cols: str = Form(...),
+    id_col: str = Form(...),
+    test_date_col: str | None = Form(None),
+    composite_sep: str | None = Form(None),
+    exog_cols: str | None = Form(None),
+    submission_target: str | None = Form(None),
+    user: dict = Depends(current_user),
+):
+    """Démarre en tâche de fond un backtest local (`mode=backtest`) ou la
+    génération du fichier de soumission (`mode=submission`), suivi par
+    /progress puis /download (soumission seulement)."""
+    competition = competition.strip()
+    if not competition:
+        raise HTTPException(400, "Nom de compétition requis")
+    if mode not in KAGGLE_MODES:
+        raise HTTPException(400, f"Mode inconnu : {mode}")
+    if model not in BULK_MODELS:
+        raise HTTPException(400, f"Modèle inconnu : {model}")
+    try:
+        spec = kc.CompetitionSpec(
+            date_col=date_col, target_col=target_col, entity_cols=parse_form_list(entity_cols), id_col=id_col,
+            test_date_col=test_date_col or None, composite_sep=composite_sep or None,
+            exog_cols=parse_form_list(exog_cols), submission_target=submission_target or None,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    params = parse_model_params(model_params)
+
+    train_raw = await read_kaggle_table(train_file)
+    test_raw = await read_kaggle_table(test_file)
+
+    if model != "lightgbm":
+        get_bulk_executor()  # cf. api_upload_forecast_bulk_start : pool créé dans le thread principal
+
+    config = {
+        "date_col": spec.date_col, "target_col": spec.target_col, "entity_cols": spec.entity_cols,
+        "id_col": spec.id_col, "test_date_col": spec.test_date_col, "composite_sep": spec.composite_sep,
+        "exog_cols": spec.exog_cols, "submission_target": spec.submission_target,
+        "model_params": params.get(model), "train_file": train_file.filename, "test_file": test_file.filename,
+    }
+    job_id = uuid.uuid4().hex
+    purge_stale_bulk_jobs()
+    bulk_jobs[job_id] = {
+        "kind": "kaggle", "owner_id": user["id"], "status": "running", "processed": 0, "total": 0,
+        "combos": [], "skipped": 0, "csv": None, "result": None, "error": None,
+        "created_at": time.time(), "competition": competition,
+    }
+    threading.Thread(
+        target=_run_kaggle_job,
+        args=(job_id, train_raw, test_raw, spec, mode, model, params, competition, user["id"], config),
+        daemon=True,
+    ).start()
+    return {"job_id": job_id}
+
+
+@app.get("/api/kaggle/progress/{job_id}")
+def api_kaggle_progress(job_id: str, user: dict = Depends(current_user)):
+    job = kaggle_job_or_404(job_id, user)
+    return {
+        "status": job["status"], "processed": job["processed"], "total": job["total"],
+        "error": job["error"], "result": job["result"],
+    }
+
+
+@app.get("/api/kaggle/download/{job_id}")
+def api_kaggle_download(job_id: str, user: dict = Depends(current_user)):
+    """Fichier de soumission. Gardé en mémoire jusqu'à la purge par âge
+    (pas supprimé au premier téléchargement) : on peut le récupérer à
+    nouveau tant que l'onglet est ouvert."""
+    job = kaggle_job_or_404(job_id, user)
+    if job["status"] != "done" or not job["csv"]:
+        raise HTTPException(409, "Aucun fichier de soumission pour ce job")
+    slug = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in job["competition"]).strip("-") or "kaggle"
+    run_id = job["result"]["run_id"]
+    return Response(
+        content=job["csv"],
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{slug}_essai{run_id}_submission.csv"'},
+    )
+
+
+@app.get("/api/kaggle/competitions")
+def api_kaggle_competitions(user: dict = Depends(current_user)):
+    return storage.list_kaggle_competitions(user["id"])
+
+
+@app.get("/api/kaggle/runs")
+def api_kaggle_runs(competition: str | None = None, user: dict = Depends(current_user)):
+    return storage.list_kaggle_runs(user["id"], competition)
+
+
+def _optional_score(value: str | None) -> float | None:
+    if value is None or not str(value).strip():
+        return None
+    try:
+        return float(str(value).replace(",", "."))
+    except ValueError:
+        raise HTTPException(400, f"Score illisible : {value}")
+
+
+@app.patch("/api/kaggle/runs/{run_id}")
+def api_kaggle_run_update(
+    run_id: int,
+    kaggle_public: str | None = Form(None),
+    kaggle_private: str | None = Form(None),
+    note: str | None = Form(None),
+    user: dict = Depends(current_user),
+):
+    """Scores officiels saisis après soumission sur Kaggle, et note libre."""
+    run = storage.update_kaggle_run(
+        user["id"], run_id, _optional_score(kaggle_public), _optional_score(kaggle_private),
+        (note or "").strip() or None,
+    )
+    if run is None:
+        raise HTTPException(404, "Essai introuvable")
+    return run
+
+
+@app.delete("/api/kaggle/runs/{run_id}")
+def api_kaggle_run_delete(run_id: int, user: dict = Depends(current_user)):
+    if not storage.delete_kaggle_run(user["id"], run_id):
+        raise HTTPException(404, "Essai introuvable")
+    return {"deleted": True}
 
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

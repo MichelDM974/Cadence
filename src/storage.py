@@ -70,6 +70,29 @@ def init_db() -> None:
         # cf. claim_orphan_points (appelé par le flux /setup).
         if "owner_id" not in columns:
             conn.execute("ALTER TABLE points_de_vente ADD COLUMN owner_id INTEGER REFERENCES users(id)")
+        # Historique des essais Kaggle (page Kaggle) : un essai = une config
+        # lancée en backtest local ou en soumission. Les scores Kaggle
+        # officiels sont saisis à la main après soumission sur le site.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS kaggle_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_id INTEGER NOT NULL REFERENCES users(id),
+                competition TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                model TEXT NOT NULL,
+                config_json TEXT NOT NULL,
+                horizon INTEGER NOT NULL,
+                n_entities INTEGER NOT NULL,
+                n_fallback INTEGER NOT NULL,
+                scores_json TEXT,
+                kaggle_public REAL,
+                kaggle_private REAL,
+                note TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+            )
+            """
+        )
 
 
 def _hash_password(password: str, salt: bytes | None = None) -> tuple[str, str]:
@@ -213,3 +236,87 @@ def session_secret() -> str:
     # l'umask), elle était lisible par les autres comptes de la machine.
     path.chmod(0o600)
     return path.read_text().strip()
+
+
+def save_kaggle_run(
+    owner_id: int,
+    competition: str,
+    mode: str,
+    model: str,
+    config: dict,
+    horizon: int,
+    n_entities: int,
+    n_fallback: int,
+    scores: dict | None,
+) -> int:
+    with _connect() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO kaggle_runs
+                (owner_id, competition, mode, model, config_json, horizon, n_entities, n_fallback, scores_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                owner_id, competition, mode, model, json.dumps(config), horizon, n_entities, n_fallback,
+                json.dumps(scores) if scores is not None else None,
+            ),
+        )
+        return cursor.lastrowid
+
+
+def _kaggle_run_dict(row) -> dict:
+    return {
+        "id": row["id"],
+        "competition": row["competition"],
+        "mode": row["mode"],
+        "model": row["model"],
+        "config": json.loads(row["config_json"]),
+        "horizon": row["horizon"],
+        "n_entities": row["n_entities"],
+        "n_fallback": row["n_fallback"],
+        "scores": json.loads(row["scores_json"]) if row["scores_json"] else None,
+        "kaggle_public": row["kaggle_public"],
+        "kaggle_private": row["kaggle_private"],
+        "note": row["note"],
+        "created_at": row["created_at"],
+    }
+
+
+def list_kaggle_runs(owner_id: int, competition: str | None = None) -> list[dict]:
+    query = "SELECT * FROM kaggle_runs WHERE owner_id = ?"
+    params: list = [owner_id]
+    if competition:
+        query += " AND competition = ?"
+        params.append(competition)
+    with _connect() as conn:
+        rows = conn.execute(query + " ORDER BY id DESC", params).fetchall()
+    return [_kaggle_run_dict(row) for row in rows]
+
+
+def list_kaggle_competitions(owner_id: int) -> list[str]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT competition FROM kaggle_runs WHERE owner_id = ? GROUP BY competition ORDER BY MAX(id) DESC",
+            (owner_id,),
+        ).fetchall()
+    return [row["competition"] for row in rows]
+
+
+def update_kaggle_run(
+    owner_id: int, run_id: int, kaggle_public: float | None, kaggle_private: float | None, note: str | None
+) -> dict | None:
+    with _connect() as conn:
+        cursor = conn.execute(
+            "UPDATE kaggle_runs SET kaggle_public = ?, kaggle_private = ?, note = ? WHERE id = ? AND owner_id = ?",
+            (kaggle_public, kaggle_private, note, run_id, owner_id),
+        )
+        if cursor.rowcount == 0:
+            return None
+        row = conn.execute("SELECT * FROM kaggle_runs WHERE id = ?", (run_id,)).fetchone()
+    return _kaggle_run_dict(row)
+
+
+def delete_kaggle_run(owner_id: int, run_id: int) -> bool:
+    with _connect() as conn:
+        cursor = conn.execute("DELETE FROM kaggle_runs WHERE id = ? AND owner_id = ?", (run_id, owner_id))
+        return cursor.rowcount > 0
