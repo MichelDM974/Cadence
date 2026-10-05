@@ -9,16 +9,20 @@
 <body>
   <header>
     <div class="header-title">
-      <h1>Paramètres des modèles</h1>
-      <p class="tagline">Réglages avancés de SARIMAX, Prophet et LightGBM, mémorisés dans ce navigateur.</p>
+      <h1><a href="index.html">Cadence</a></h1>
+      <p class="tagline">Comprendre pour prévoir.</p>
     </div>
+    <nav class="page-nav" aria-label="Pages">
+      <a href="index.html" class="nav-link">Prévision</a>
+      <a href="kaggle.html" class="nav-link">Kaggle</a>
+      <a href="models.html" class="nav-link active" aria-current="page">Modèles</a>
+      <a href="theorie.html" class="nav-link">Théorie</a>
+    </nav>
     <div class="header-actions">
-      <a href="index.html" class="back-btn">← Retour à l'analyse</a>
       <div class="account-menu">
         <button type="button" id="account-menu-btn" title="Paramètres" aria-label="Paramètres">⚙</button>
         <div id="settings-popup" class="settings-popup" hidden>
           <p class="account-user">Connecté : <strong id="account-username"></strong></p>
-          <a href="theorie.html" class="account-dropdown-item">Théorie</a>
           <button type="button" id="logout-btn" class="account-dropdown-item">Se déconnecter</button>
         </div>
       </div>
@@ -26,6 +30,10 @@
   </header>
 
   <main>
+    <div class="page-intro">
+      <h2>Paramètres des modèles</h2>
+      <p class="hint">Réglages avancés de SARIMAX, Prophet et LightGBM, mémorisés dans ce navigateur.</p>
+    </div>
     <section class="panel model-params-page">
       <p class="hint">
         Réglages avancés des modèles de prévision — mémorisés dans ce navigateur, envoyés à chaque

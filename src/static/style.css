@@ -42,24 +42,49 @@ body {
   color: var(--text);
 }
 
+/* En-tête compact (modèle CryptX) : titre à gauche, pages au centre en
+   sélecteur segmenté, ⚙ à droite. */
 header {
-  padding: 28px 32px 20px;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  padding: 14px 32px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
   gap: 16px;
   border-bottom: 1px solid var(--border);
-}
-
-.header-title {
-  max-width: 560px;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.page-nav {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.nav-link {
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 7px 18px;
+  font-size: 0.92rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.nav-link:hover { color: var(--accent); background: var(--accent-soft); }
+.nav-link.active { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+
+/* Titre propre à une sous-page (Modèles, Théorie, Kaggle), en tête du contenu. */
+.page-intro h2 {
+  margin: 8px 0 0;
+  font-size: 1.35rem;
 }
 
 .account-menu {
@@ -141,27 +166,6 @@ header {
   color: var(--muted);
   font-size: 0.85rem;
   margin: 0;
-}
-
-.back-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--panel);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 9px 16px;
-  font-size: 0.9rem;
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.back-btn:hover,
-.back-btn:focus-visible {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: var(--accent);
 }
 
 .model-params-block {
@@ -367,17 +371,18 @@ header {
 
 header h1,
 .auth-card h1 {
-  margin: 0 0 10px;
-  font-size: 2.5rem;
+  margin: 0;
+  font-size: 1.6rem;
   font-weight: 800;
   letter-spacing: -0.02em;
   color: var(--accent);
 }
 
+header h1 a { color: inherit; text-decoration: none; }
+
 header .tagline {
-  margin: 6px 0 0;
-  font-size: 0.95rem;
-  line-height: 1.5;
+  margin: 2px 0 0;
+  font-size: 0.8rem;
   color: var(--muted);
 }
 
@@ -1013,4 +1018,16 @@ th, td {
 
 .account-user strong {
   color: var(--text);
+}
+
+/* En fin de fichier : doit l'emporter sur les règles de base (main...). */
+/* Téléphone : titre et ⚙ sur une ligne, pages en dessous sur toute la largeur. */
+@media (max-width: 760px) {
+  header {
+    grid-template-columns: 1fr auto;
+    padding: 12px 16px;
+  }
+  .page-nav { grid-column: 1 / -1; grid-row: 2; overflow-x: auto; }
+  .nav-link { padding: 7px 12px; flex: 1; text-align: center; }
+  main { padding: 16px 16px 48px; }
 }

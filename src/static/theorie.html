@@ -12,16 +12,20 @@
 <body>
   <header>
     <div class="header-title">
-      <h1>Comment fonctionnent les modèles</h1>
-      <p class="tagline">De ARIMA à SARIMAX, étape par étape.</p>
+      <h1><a href="index.html">Cadence</a></h1>
+      <p class="tagline">Comprendre pour prévoir.</p>
     </div>
+    <nav class="page-nav" aria-label="Pages">
+      <a href="index.html" class="nav-link">Prévision</a>
+      <a href="kaggle.html" class="nav-link">Kaggle</a>
+      <a href="models.html" class="nav-link">Modèles</a>
+      <a href="theorie.html" class="nav-link active" aria-current="page">Théorie</a>
+    </nav>
     <div class="header-actions">
-      <a href="index.html" class="back-btn">← Retour à l'analyse</a>
       <div class="account-menu">
         <button type="button" id="account-menu-btn" title="Paramètres" aria-label="Paramètres">⚙</button>
         <div id="settings-popup" class="settings-popup" hidden>
           <p class="account-user">Connecté : <strong id="account-username"></strong></p>
-          <a href="models.html" class="account-dropdown-item">Modèles</a>
           <button type="button" id="logout-btn" class="account-dropdown-item">Se déconnecter</button>
         </div>
       </div>
@@ -29,6 +33,10 @@
   </header>
 
   <main>
+    <div class="page-intro">
+      <h2>Comment fonctionnent les modèles</h2>
+      <p class="hint">De ARIMA à SARIMAX, étape par étape.</p>
+    </div>
     <section class="panel model-params-page">
       <p class="hint">
         SARIMAX, le modèle de référence de Cadence pour l'analyse d'un point de vente, se construit en
