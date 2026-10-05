@@ -291,3 +291,18 @@ def test_series_eteintes_prevues_a_zero():
     out = kc.zero_dead_series(preds, history, spec, 14).set_index("e")["prevision"]
     assert out["morte"] == 0.0
     assert out["vivante"] == 2.5  # une vente récente suffit à la garder en vie
+
+
+def test_series_eteintes_actives_par_defaut_et_desactivables():
+    client = TestClient(app)
+    connecter(client)
+    train, test = make_competition(n_days=60, test_days=7)
+    for flag in (None, "false"):
+        # nom propre : un job d'un test précédent peut finir dans cette base
+        data = {**MAPPING, "mode": "backtest", "competition": "defaut-eteintes"}
+        if flag:
+            data["zero_dead_series"] = flag
+        _attendre(client, client.post("/api/kaggle/start", files=_files(train, test), data=data).json()["job_id"])
+    sans, avec = client.get("/api/kaggle/runs", params={"competition": "defaut-eteintes"}).json()
+    assert avec["config"]["options"] == {"zero_dead_days": 14}
+    assert sans["config"]["options"] == {}

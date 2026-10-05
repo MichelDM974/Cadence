@@ -1743,6 +1743,11 @@ def api_point_autotune(
 # *Store Sales* : ~120 Mo) ; .zip/.gz acceptés tels que téléchargés.
 KAGGLE_MAX_UPLOAD_BYTES = 500 * 1024 * 1024
 KAGGLE_MODES = {"backtest", "submission"}
+# Séries sans aucune vente sur ce nombre de jours : prévues à 0. Active par
+# défaut (05/10/2026) : Store Sales 0.476 -> 0.461 (fenêtres récentes) et
+# 0.543 -> 0.528 (même période un an plus tôt), strictement neutre sur
+# Recruit — règle « gagne quelque part sans rien dégrader ».
+KAGGLE_ZERO_DEAD_DAYS = 14
 
 
 async def read_kaggle_table(file: UploadFile) -> pd.DataFrame:
@@ -1929,6 +1934,7 @@ async def api_kaggle_start(
     composite_sep: str | None = Form(None),
     exog_cols: str | None = Form(None),
     submission_target: str | None = Form(None),
+    zero_dead_series: bool = Form(True),
     user: dict = Depends(current_user),
 ):
     """Démarre en tâche de fond un backtest local (`mode=backtest`) ou la
@@ -1950,6 +1956,7 @@ async def api_kaggle_start(
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     params = parse_model_params(model_params)
+    options = {"zero_dead_days": KAGGLE_ZERO_DEAD_DAYS} if zero_dead_series else {}
 
     train_raw = await read_kaggle_table(train_file)
     test_raw = await read_kaggle_table(test_file)
@@ -1962,6 +1969,7 @@ async def api_kaggle_start(
         "id_col": spec.id_col, "test_date_col": spec.test_date_col, "composite_sep": spec.composite_sep,
         "exog_cols": spec.exog_cols, "submission_target": spec.submission_target,
         "model_params": params.get(model), "train_file": train_file.filename, "test_file": test_file.filename,
+        "options": options,
     }
     job_id = uuid.uuid4().hex
     purge_stale_bulk_jobs()
@@ -1972,7 +1980,7 @@ async def api_kaggle_start(
     }
     threading.Thread(
         target=_run_kaggle_job,
-        args=(job_id, train_raw, test_raw, spec, mode, model, params, competition, user["id"], config),
+        args=(job_id, train_raw, test_raw, spec, mode, model, params, competition, user["id"], config, options),
         daemon=True,
     ).start()
     return {"job_id": job_id}
