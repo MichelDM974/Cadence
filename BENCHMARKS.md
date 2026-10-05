@@ -39,7 +39,10 @@ Tête du leaderboard public, pour référence : 0.501.
 
 | Configuration | RMSLE |
 |---|---|
-| LightGBM, objectif tweedie (config app depuis le 03/09/2026) | **0.42475** |
+| **Page Kaggle : LightGBM « gros » (255 feuilles, 0.03, 1200 it.) + séries éteintes à 0 (05/10/2026)** | **0.42150** |
+| Script dédié `forecast_submission_lightgbm_store_sales.py`, tweedie (03/09/2026) | 0.42475 |
+| Page Kaggle : LightGBM défaut, sans exogène (05/10/2026) | 0.46408 |
+| Page Kaggle : LightGBM défaut + `onpromotion` futur de test.csv (05/10/2026) | 0.53171 |
 | SARIMAX seul (aucun exogène) | 0.42726 |
 | SARIMAX + `onpromotion` (jointure par entité) | 0.44460 |
 | Prophet + `onpromotion` (jointure par entité) | 0.51275 |
@@ -48,6 +51,30 @@ Tête du leaderboard public, pour référence : 0.501.
 Tête du leaderboard, pour référence : 0.37294.
 
 ## Backtests internes récents (RMSLE, derniers jours connus)
+
+### Store Sales — banc `benchmark_kaggle.py` (05/10/2026)
+
+Même chemin que la page (`api.kaggle_backtest`). « Récent » = moyenne de 3
+fenêtres de 16 j en fin de train ; « an-1 » = la période du test un an plus
+tôt (16–31/08/2016). Seules les pistes qui gagnent **sur les deux** sont
+retenues : la fenêtre récente seule a classé `onpromotion` à l'envers du
+score officiel (cf. tableau Kaggle ci-dessus).
+
+| Variante | Récent | an-1 |
+|---|---|---|
+| base (défaut, avec `onpromotion`) | 0.47606 | 0.54297 |
+| sans exogène | 0.48811 | 0.54201 |
+| séries éteintes à 0 (14 j) | 0.46080 | 0.52790 |
+| séries éteintes à 0 (28 j) | 0.46164 | 0.52869 |
+| sans exogène + éteintes 14 j | 0.47420 | 0.52687 |
+| lags fins (1–7, 14, 21, 28 ; fenêtres 7–56) | 0.47588 | 0.54660 |
+| arrondi à 4 décimales | 0.47606 | 0.54298 |
+| 3 graines moyennées | 0.47818 | 0.54539 |
+| **LightGBM « gros » (255 feuilles, 0.03, 1200 it.)** | **0.44420** | **0.50491** |
+
+« an-1 » a suivi le score officiel sur la soumission retenue (0.543 -> 0.505
+en local, 0.464 -> 0.4215 officiel) ; elle reste approximative sur
+l'ampleur (exogène : 0.001 en local, 0.068 officiel).
 
 ### Store Sales — exogène future lue dans test.csv (05/10/2026, page Kaggle)
 

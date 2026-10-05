@@ -213,7 +213,7 @@ def test_run_bulk_lightgbm_forecast_auto_reduces_regularization_for_homogeneous_
 
     auto_rows, _ = lf.run_bulk_lightgbm_forecast(*call_args, None, None, None)
     explicit_reduced_rows, _ = lf.run_bulk_lightgbm_forecast(
-        *call_args, lf.REDUCED_REGULARIZATION_PARAMS, None, None
+        *call_args, lf.HOMOGENEOUS_PANEL_PARAMS, lf.HOMOGENEOUS_PANEL_NUM_BOOST_ROUND, None
     )
 
     assert auto_rows == explicit_reduced_rows

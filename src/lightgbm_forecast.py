@@ -91,6 +91,14 @@ def add_lag_features(
 
 ENTITY_HISTORY_CV_THRESHOLD = 0.1
 REDUCED_REGULARIZATION_PARAMS = {"min_data_in_leaf": 10, "lambda_l2": 0.05}
+# Profil « panel homogène » (05/10/2026) : la régularisation réduite plus
+# un modèle plus gros et plus lent (réglages du script dédié Store Sales).
+# Store Sales : 0.46408 -> 0.42150 au score officiel (avec séries éteintes à
+# 0) ; sur Recruit (historiques inégaux) il dégradait (0.575 -> 0.580) et
+# entraînait 18x plus lentement : réservé au même signal que la
+# régularisation réduite, qu'il remplace.
+HOMOGENEOUS_PANEL_PARAMS = {**REDUCED_REGULARIZATION_PARAMS, "learning_rate": 0.03, "num_leaves": 255}
+HOMOGENEOUS_PANEL_NUM_BOOST_ROUND = 1200
 
 
 def _entity_history_length_cv(history: pd.DataFrame, group_cols: list[str]) -> float | None:
@@ -398,7 +406,8 @@ def run_bulk_lightgbm_forecast(
     else:
         include_yoy = _should_auto_include_yoy(history, group_cols)
     if lgb_params is None and _should_auto_reduce_regularization(history, group_cols):
-        lgb_params = REDUCED_REGULARIZATION_PARAMS
+        lgb_params = HOMOGENEOUS_PANEL_PARAMS
+        num_boost_round = num_boost_round or HOMOGENEOUS_PANEL_NUM_BOOST_ROUND
     tail_window_days = max(TAIL_WINDOW_DAYS, max(*lag_days, *rolling_windows) + 7, 364 + 28 + 7 if include_yoy else 0)
 
     train_df = add_lag_features(add_calendar_features(history.copy()), group_cols, lag_days, rolling_windows, include_yoy)
