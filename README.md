@@ -25,6 +25,7 @@ Généraliste dès le départ : le moteur (décomposition + prévision) et l'imp
 - Variables exogènes mondiales, activables individuellement par l'utilisateur : jours fériés (tous pays), météo (historique réelle + normales saisonnières), vacances scolaires (France, par académie)
 - Import CSV multi-entités (jusqu'à 2 dimensions de regroupement, ex. magasin × catégorie), avec génération de prévisions en masse pour toutes les combinaisons
 - Variables exogènes personnalisées : colonnes numériques déjà présentes dans le fichier importé, ou un second fichier externe joint automatiquement (série globale ou par entité, y compris valeurs futures réelles)
+- Page Kaggle (compétitions de séries temporelles) : train + test (.csv/.zip/.gz) → correspondance de colonnes proposée → backtest local qui rejoue l'horizon réel du test (RMSLE, RMSE, MAE, SMAPE face au naïf saisonnier) → fichier de soumission ; historique des essais par compétition, avec les scores Kaggle officiels reportés
 - Persistance locale (SQLite) des points de vente/séries analysées, réutilisables sans réimport
 - Hyperparamètres des 3 modèles éditables depuis l'interface
 - Mode sombre

@@ -49,6 +49,30 @@ Tête du leaderboard, pour référence : 0.37294.
 
 ## Backtests internes récents (RMSLE, derniers jours connus)
 
+### Store Sales — exogène future lue dans test.csv (05/10/2026, page Kaggle)
+
+Même backtest LightGBM (défaut app, 16 derniers jours), lancé depuis la
+page Kaggle, qui passe par la même génération en masse :
+
+| Configuration | RMSLE |
+|---|---|
+| sans exogène | 0.53694 |
+| **+ `onpromotion`, valeurs futures réelles de test.csv** | **0.49947** |
+
+Le 0.53694 reproduit exactement la ligne « régularisation réduite » plus
+bas : même pipeline. L'ancien `onpromotion` (0.55166 au Kaggle officiel)
+reportait la dernière valeur connue sur tout l'horizon ; c'est la vraie
+valeur future qui fait le gain. Pas encore soumis à Kaggle.
+
+### Recruit — repli et prolongement des entités (05/10/2026, page Kaggle)
+
+LightGBM défaut, 39 derniers jours : **0.57506** (naïf saisonnier
+0.83966), contre 0.72323 avec `benchmark_lightgbm_variants.py`. Écart dû
+à la méthode, pas au modèle : le script laisse à 0 les entités sans
+prévision, et celles dont l'historique s'arrête avant la coupure ; la page
+leur applique leur moyenne récente et les prolonge jusqu'à la fin du
+train. Les chiffres Recruit antérieurs ne se comparent donc qu'entre eux.
+
 ### Recruit — 5 configurations LightGBM bulk (07/09/2026, `benchmark_lightgbm_variants.py`)
 
 Rejoué en appelant directement `run_bulk_lightgbm_forecast`, le point d'entrée
