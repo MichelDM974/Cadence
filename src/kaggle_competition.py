@@ -297,6 +297,39 @@ def predictions_frame(rows: list[dict], spec: CompetitionSpec) -> pd.DataFrame:
     return preds
 
 
+def blend_predictions(frames: list[tuple[pd.DataFrame, float]], spec: CompetitionSpec) -> pd.DataFrame:
+    """Moyenne pondérée de plusieurs jeux de prévisions. Une ligne absente
+    d'un membre (entité ignorée par ce modèle) est moyennée sur les seuls
+    membres qui l'ont prévue, plutôt que perdue ou comptée à 0."""
+    if len(frames) == 1:
+        return frames[0][0]
+    keys = [*spec.entity_cols, "date"]
+    merged = None
+    for i, (frame, weight) in enumerate(frames):
+        part = frame.rename(columns={"prevision": f"p{i}"})
+        merged = part if merged is None else merged.merge(part, on=keys, how="outer")
+    weighted = sum(merged[f"p{i}"].fillna(0) * w for i, (_, w) in enumerate(frames))
+    total = sum(merged[f"p{i}"].notna() * w for i, (_, w) in enumerate(frames))
+    merged["prevision"] = weighted / total.where(total > 0)
+    return merged[[*keys, "prevision"]].dropna(subset=["prevision"])
+
+
+def zero_dead_series(preds: pd.DataFrame, history: pd.DataFrame, spec: CompetitionSpec, days: int) -> pd.DataFrame:
+    """Prévision à 0 pour toute série restée à 0 sur ses `days` derniers
+    jours connus (produit plus vendu, établissement fermé) : un modèle global
+    lui prête sinon un petit volume résiduel, coûteux en RMSLE."""
+    daily = history.groupby([*spec.entity_cols, spec.date_col], observed=True)[spec.target_col].sum().reset_index()
+    end = daily[spec.date_col].max()
+    recent = daily[daily[spec.date_col] > end - pd.Timedelta(days=days)]
+    totals = recent.groupby(spec.entity_cols, observed=True)[spec.target_col].agg(["sum", "size"])
+    dead = totals[(totals["sum"] == 0) & (totals["size"] >= days)].reset_index()[spec.entity_cols]
+    if dead.empty:
+        return preds
+    out = preds.merge(dead.assign(_dead=True), on=spec.entity_cols, how="left")
+    out.loc[out["_dead"].fillna(False).astype(bool), "prevision"] = 0.0
+    return out.drop(columns="_dead")
+
+
 def attach_predictions(
     targets: pd.DataFrame, preds: pd.DataFrame, history: pd.DataFrame, spec: CompetitionSpec, clip_zero: bool
 ) -> tuple[pd.Series, int]:

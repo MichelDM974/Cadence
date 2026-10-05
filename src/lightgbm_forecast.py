@@ -270,7 +270,7 @@ def train_bulk_model(
 
 
 def predict_bulk(
-    booster: lgb.Booster,
+    booster: lgb.Booster | list[lgb.Booster],
     history: pd.DataFrame,
     future_exog: pd.DataFrame,
     group_cols: list[str],
@@ -281,6 +281,7 @@ def predict_bulk(
     rolling_windows: tuple[int, ...] = ROLLING_WINDOWS,
     include_yoy: bool = False,
     tail_window_days: int = TAIL_WINDOW_DAYS,
+    round_decimals: int = 1,
 ) -> pd.DataFrame:
     """Prévision récursive : à chaque jour de l'horizon, ne retraite qu'une
     fenêtre glissante bornée (tail_window_days x nb d'entités, pas tout
@@ -288,6 +289,7 @@ def predict_bulk(
     un seul `predict()` pour ce jour, puis réinjecte la prédiction comme
     valeur connue pour l'étape suivante.
     """
+    boosters = booster if isinstance(booster, list) else [booster]
     tail = history.sort_values([*group_cols, "date"]).reset_index(drop=True)
     rank_from_end = tail.groupby(group_cols, observed=True).cumcount(ascending=False)
     tail = tail[rank_from_end < tail_window_days].reset_index(drop=True)
@@ -312,10 +314,11 @@ def predict_bulk(
 
         today_rows = combined.loc[combined["date"] == target_date].reset_index(drop=True)
         # tweedie prédit déjà en échelle brute (log-link inversé en interne) : pas d'expm1 ici
-        pred_visitors = np.clip(booster.predict(today_rows[feature_cols]), 0, None)
+        # plusieurs graines (bagging) : moyenne à chaque pas, avant réinjection
+        pred_visitors = np.clip(np.mean([b.predict(today_rows[feature_cols]) for b in boosters], axis=0), 0, None)
 
         day_result = today_rows[[*group_cols, "date"]].copy()
-        day_result["prevision"] = np.round(pred_visitors, 1)
+        day_result["prevision"] = np.round(pred_visitors, round_decimals)
         results.append(day_result)
 
         predicted_rows = today_rows[tail.columns].copy()
@@ -403,17 +406,26 @@ def run_bulk_lightgbm_forecast(
     non_feature = {"date", "visitors", "y", *group_cols}
     feature_cols = [c for c in train_df.columns if c not in non_feature]
 
-    booster = train_bulk_model(train_df, feature_cols, code_cols, lgb_params, num_boost_round)
+    # `seeds` (opt-in) : un modèle par graine, prévisions moyennées.
+    seeds = feature_config.get("seeds") or [None]
+    boosters = [
+        train_bulk_model(
+            train_df, feature_cols, code_cols,
+            {**(lgb_params or {}), "seed": seed} if seed is not None else lgb_params, num_boost_round,
+        )
+        for seed in seeds
+    ]
+    round_decimals = int(feature_config.get("round_decimals", 1))
     predictions = predict_bulk(
-        booster, history, future_exog, group_cols, feature_cols, horizon, on_progress,
-        lag_days, rolling_windows, include_yoy, tail_window_days,
+        boosters, history, future_exog, group_cols, feature_cols, horizon, on_progress,
+        lag_days, rolling_windows, include_yoy, tail_window_days, round_decimals,
     )
 
     rows = []
     for rec in predictions.to_dict("records"):
         row = {col: rec[col] for col in group_cols}
         row["date"] = pd.Timestamp(rec["date"]).date().isoformat()
-        row["prevision"] = round(float(rec["prevision"]), 1)
+        row["prevision"] = round(float(rec["prevision"]), round_decimals)
         rows.append(row)
 
     return rows, skipped

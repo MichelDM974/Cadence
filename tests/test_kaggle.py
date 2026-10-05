@@ -178,7 +178,8 @@ def _files(train, test):
 
 
 def _attendre(client, job_id):
-    for _ in range(300):
+    # 2 min : large, pour rester vert sur une machine chargée (benchmark en parallèle)
+    for _ in range(1200):
         progress = client.get(f"/api/kaggle/progress/{job_id}").json()
         if progress["status"] != "running":
             return progress
@@ -263,3 +264,30 @@ def test_mode_et_entites_invalides_rejetes():
 def test_kaggle_exige_une_session():
     train, test = make_competition(n_days=30, test_days=3)
     assert TestClient(app).post("/api/kaggle/inspect", files=_files(train, test)).status_code == 401
+
+
+# --- Pistes de précision -----------------------------------------------------
+
+def test_moyenne_ponderee_ignore_le_membre_qui_n_a_pas_prevu():
+    spec = kc.CompetitionSpec(date_col="date", target_col="y", entity_cols=["e"], id_col="id")
+    d = pd.Timestamp("2024-01-01")
+    a = pd.DataFrame({"e": ["x", "y"], "date": [d, d], "prevision": [10.0, 4.0]})
+    b = pd.DataFrame({"e": ["x"], "date": [d], "prevision": [20.0]})
+    out = kc.blend_predictions([(a, 0.75), (b, 0.25)], spec).set_index("e")["prevision"]
+    assert out["x"] == pytest.approx(12.5)
+    assert out["y"] == pytest.approx(4.0)  # seul `a` l'a prévue
+
+
+def test_series_eteintes_prevues_a_zero():
+    spec = kc.CompetitionSpec(date_col="date", target_col="y", entity_cols=["e"], id_col="id")
+    dates = pd.date_range("2024-01-01", periods=30)
+    history = pd.DataFrame({
+        "e": ["morte"] * 30 + ["vivante"] * 30,
+        "date": list(dates) * 2,
+        "y": [5.0] * 10 + [0.0] * 20 + [0.0] * 29 + [3.0],
+    })
+    future = pd.Timestamp("2024-01-31")
+    preds = pd.DataFrame({"e": ["morte", "vivante"], "date": [future] * 2, "prevision": [1.2, 2.5]})
+    out = kc.zero_dead_series(preds, history, spec, 14).set_index("e")["prevision"]
+    assert out["morte"] == 0.0
+    assert out["vivante"] == 2.5  # une vente récente suffit à la garder en vie

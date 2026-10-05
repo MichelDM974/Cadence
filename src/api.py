@@ -1341,6 +1341,9 @@ def bulk_forecast_rows(
 
         lgb_settings = dict(model_params.get("lightgbm") or {})
         lgb_num_boost_round = lgb_settings.pop("num_boost_round", None)
+        # Retiré avant le test `lgb_settings or None` : des features seules
+        # ne doivent pas désactiver la régularisation auto-détectée.
+        lgb_feature_config = lgb_settings.pop("feature_config", None)
 
         rows, skipped_combos = lightgbm_forecast.run_bulk_lightgbm_forecast(
             raw, date_col, value_col, group_cols, horizon, combos, group_indices, extra_cols,
@@ -1348,7 +1351,7 @@ def bulk_forecast_rows(
             external_by_entity, external_exog, fixed_store_value, fixed_category_value,
             store_col, category_col, exog_store_col, exog_category_col,
             _daily_series, align_external_exog, on_progress,
-            lgb_settings or None, lgb_num_boost_round,
+            lgb_settings or None, lgb_num_boost_round, lgb_feature_config,
         )
         skipped = len(skipped_combos)
         job["processed"] = len(combos)
@@ -1806,9 +1809,70 @@ def _kaggle_forecast_rows(
     return rows
 
 
+def kaggle_predict(
+    job: dict, history: pd.DataFrame, spec: kc.CompetitionSpec, horizon: int, model: str,
+    model_params: dict, exog_long: pd.DataFrame | None, entities: pd.DataFrame, options: dict | None = None,
+) -> pd.DataFrame:
+    """Prévisions (entité(s), date, prevision) d'un essai Kaggle : un modèle,
+    ou la moyenne pondérée de plusieurs (`options["ensemble"]` : liste de
+    [modèle, poids]), puis les post-traitements génériques activés dans
+    `options` (cf. kaggle_competition)."""
+    options = options or {}
+    members = options.get("ensemble") or [[model, 1.0]]
+    frames = []
+    for i, (member, weight) in enumerate(members):
+        if member not in BULK_MODELS:
+            raise HTTPException(400, f"Modèle inconnu : {member}")
+        job["step"] = f"{MODEL_LABELS_FR.get(member, member)} ({i + 1}/{len(members)})" if len(members) > 1 else None
+        rows = _kaggle_forecast_rows(job, history, spec, horizon, member, model_params, exog_long, entities)
+        frames.append((kc.predictions_frame(rows, spec), float(weight)))
+    preds = kc.blend_predictions(frames, spec)
+    if options.get("zero_dead_days"):
+        preds = kc.zero_dead_series(preds, history, spec, int(options["zero_dead_days"]))
+    return preds
+
+
+MODEL_LABELS_FR = {"lightgbm": "LightGBM", "sarimax": "SARIMAX", "prophet": "Prophet"}
+
+
+def kaggle_backtest(
+    job: dict, train: pd.DataFrame, spec: kc.CompetitionSpec, keys: pd.DataFrame, horizon: int, scored_days: int,
+    exog_long: pd.DataFrame | None, model: str, model_params: dict, options: dict | None = None,
+) -> dict:
+    """Backtest local d'un essai : rejoue la configuration du vrai test sur
+    les derniers jours de `train` (que le benchmark tronque pour évaluer
+    plusieurs fenêtres successives). Renvoie scores et comptages."""
+    entities = keys[spec.entity_cols].drop_duplicates()
+    try:
+        history, truth = kc.backtest_split(train, spec, horizon, scored_days)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    # Kaggle ne note que les entités du test : idem en local.
+    targets = truth.merge(entities, on=spec.entity_cols)
+    if targets.empty:
+        raise HTTPException(400, "Aucune entité du test n'a d'historique sur la fenêtre de backtest")
+    history = kc.pad_to(history, spec, history[spec.date_col].max())
+    preds = kaggle_predict(job, history, spec, horizon, model, model_params, exog_long, entities, options)
+    clip_zero = bool(train[spec.target_col].min() >= 0)
+    values, n_fallback = kc.attach_predictions(targets, preds, history, spec, clip_zero)
+    actual = targets["actual"].to_numpy()
+    return {
+        "scores": {
+            "model": kc.compute_metrics(actual, values.to_numpy()),
+            "naive": kc.compute_metrics(actual, kc.seasonal_naive(history, targets, spec).to_numpy()),
+            "scored_days": scored_days,
+            "n_rows": len(targets),
+        },
+        "n_rows": len(targets),
+        "n_fallback": n_fallback,
+        "n_entities": len(entities),
+    }
+
+
 def _run_kaggle_job(
     job_id: str, train_raw: pd.DataFrame, test_raw: pd.DataFrame, spec: kc.CompetitionSpec,
     mode: str, model: str, model_params: dict, competition: str, owner_id: int, config: dict,
+    options: dict | None = None,
 ) -> None:
     job = bulk_jobs[job_id]
     try:
@@ -1821,44 +1885,24 @@ def _run_kaggle_job(
             raise HTTPException(400, str(exc))
         del train_raw, test_raw
 
-        entities = keys[spec.entity_cols].drop_duplicates()
-        clip_zero = bool(train[spec.target_col].min() >= 0)
-
         if mode == "backtest":
-            try:
-                history, truth = kc.backtest_split(train, spec, horizon, scored_days)
-            except ValueError as exc:
-                raise HTTPException(400, str(exc))
-            # Kaggle ne note que les entités du test : idem en local.
-            targets = truth.merge(entities, on=spec.entity_cols)
-            if targets.empty:
-                raise HTTPException(400, "Aucune entité du test n'a d'historique sur la fenêtre de backtest")
+            out = kaggle_backtest(job, train, spec, keys, horizon, scored_days, exog_long, model, model_params, options)
+            scores, n_rows, n_fallback, n_entities = out["scores"], out["n_rows"], out["n_fallback"], out["n_entities"]
         else:
-            history, targets = train, keys
-
-        history = kc.pad_to(history, spec, history[spec.date_col].max())
-        rows = _kaggle_forecast_rows(job, history, spec, horizon, model, model_params, exog_long, entities)
-        preds = kc.predictions_frame(rows, spec)
-        values, n_fallback = kc.attach_predictions(targets, preds, history, spec, clip_zero)
-
-        scores = None
-        if mode == "backtest":
-            actual = targets["actual"].to_numpy()
-            scores = {
-                "model": kc.compute_metrics(actual, values.to_numpy()),
-                "naive": kc.compute_metrics(actual, kc.seasonal_naive(history, targets, spec).to_numpy()),
-                "scored_days": scored_days,
-                "n_rows": len(targets),
-            }
-        else:
+            entities = keys[spec.entity_cols].drop_duplicates()
+            history = kc.pad_to(train, spec, train[spec.date_col].max())
+            preds = kaggle_predict(job, history, spec, horizon, model, model_params, exog_long, entities, options)
+            clip_zero = bool(train[spec.target_col].min() >= 0)
+            values, n_fallback = kc.attach_predictions(keys, preds, history, spec, clip_zero)
             job["csv"] = kc.submission_csv(keys, values, spec)
+            scores, n_rows, n_entities = None, len(keys), len(entities)
 
         run_id = storage.save_kaggle_run(
-            owner_id, competition, mode, model, config, horizon, len(entities), n_fallback, scores
+            owner_id, competition, mode, model, config, horizon, n_entities, n_fallback, scores
         )
         job["result"] = {
             "run_id": run_id, "mode": mode, "horizon": horizon, "scored_days": scored_days,
-            "n_entities": len(entities), "n_rows": len(targets), "n_fallback": n_fallback, "scores": scores,
+            "n_entities": n_entities, "n_rows": n_rows, "n_fallback": n_fallback, "scores": scores,
         }
         job["status"] = "done"
     except HTTPException as exc:
