@@ -118,7 +118,9 @@ function fillMapping(s) {
   el("composite-toggle").checked = Boolean(s.composite_sep);
   el("composite-sep").value = s.composite_sep || "_";
   el("submission-target").value = s.target_col || "";
-  renderExogChoices(new Set(s.exog_cols));
+  // Proposées mais décochées : sur Store Sales, onpromotion gagnait 7 % au
+  // backtest récent mais coûtait 0.464 -> 0.532 au score officiel (05/10/2026).
+  renderExogChoices(new Set());
   updateCompositeFields();
 }
 
