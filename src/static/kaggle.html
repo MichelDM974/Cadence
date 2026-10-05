@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cadence — Kaggle</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <div class="header-title">
+      <h1><a href="index.html">Cadence</a></h1>
+      <p class="tagline">Comprendre pour prévoir.</p>
+    </div>
+    <nav class="page-nav" aria-label="Pages">
+      <a href="index.html" class="nav-link">Prévision</a>
+      <a href="kaggle.html" class="nav-link active" aria-current="page">Kaggle</a>
+      <a href="models.html" class="nav-link">Modèles</a>
+      <a href="theorie.html" class="nav-link">Théorie</a>
+    </nav>
+    <div class="header-actions">
+      <div class="account-menu">
+        <button type="button" id="account-menu-btn" title="Paramètres" aria-label="Paramètres">⚙</button>
+        <div id="settings-popup" class="settings-popup" hidden>
+          <p class="account-user">Connecté : <strong id="account-username"></strong></p>
+          <button type="button" id="logout-btn" class="account-dropdown-item">Se déconnecter</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="page-intro">
+      <h2>Compétition Kaggle</h2>
+      <p class="hint">
+        Séries temporelles : du train et du test de la compétition au fichier à soumettre. Le backtest local rejoue
+        la même configuration sur les derniers jours connus, pour trier les essais avant de dépenser une soumission.
+      </p>
+    </div>
+
+    <section class="panel">
+      <h2>1. Fichiers</h2>
+      <div class="field-row kaggle-fields">
+        <div class="field">
+          <label for="competition-input">Compétition</label>
+          <input type="text" id="competition-input" list="competition-list" placeholder="ex. store-sales" maxlength="80" />
+          <datalist id="competition-list"></datalist>
+        </div>
+      </div>
+      <div class="field-row kaggle-fields">
+        <div class="field">
+          <label for="train-file">Train (historique avec la cible)</label>
+          <input type="file" id="train-file" accept=".csv,.zip,.gz" />
+        </div>
+        <div class="field">
+          <label for="test-file">Test (ou sample_submission.csv)</label>
+          <input type="file" id="test-file" accept=".csv,.zip,.gz" />
+        </div>
+      </div>
+      <p class="hint">.csv, .zip ou .gz tels que téléchargés depuis Kaggle, jusqu'à 500 Mo.</p>
+      <p id="inspect-status" class="status"></p>
+    </section>
+
+    <section class="panel" id="mapping-panel" hidden>
+      <h2>2. Colonnes</h2>
+      <p class="hint">Proposées automatiquement à partir des deux fichiers : à vérifier.</p>
+      <div class="field-row kaggle-fields">
+        <div class="field">
+          <label for="date-col">Date (train)</label>
+          <select id="date-col"></select>
+        </div>
+        <div class="field">
+          <label for="target-col">Cible à prévoir (train)</label>
+          <select id="target-col"></select>
+        </div>
+      </div>
+      <div class="field-row kaggle-fields">
+        <div class="field">
+          <label for="entity-col-1">Série : 1re colonne d'entité</label>
+          <select id="entity-col-1"></select>
+        </div>
+        <div class="field">
+          <label for="entity-col-2">Série : 2e colonne (optionnel)</label>
+          <select id="entity-col-2"></select>
+        </div>
+      </div>
+      <div class="field-row kaggle-fields">
+        <div class="field">
+          <label for="id-col">Identifiant de soumission (test)</label>
+          <select id="id-col"></select>
+        </div>
+        <div class="field">
+          <label for="submission-target">Nom de la colonne prévue</label>
+          <input type="text" id="submission-target" />
+        </div>
+      </div>
+      <label class="checkbox-line">
+        <input type="checkbox" id="composite-toggle" />
+        Identifiant composite « entité + date » (ex. <code>air_00a9…_2017-04-23</code>)
+      </label>
+      <div class="field-row kaggle-fields">
+        <div class="field" id="test-date-field">
+          <label for="test-date-col">Date (test)</label>
+          <select id="test-date-col"></select>
+        </div>
+        <div class="field" id="composite-sep-field" hidden>
+          <label for="composite-sep">Séparateur avant la date</label>
+          <input type="text" id="composite-sep" maxlength="3" value="_" />
+        </div>
+      </div>
+      <div id="exog-field">
+        <label>Exogènes connues à l'avance (présentes dans le test)</label>
+        <div id="exog-list" class="kaggle-checks"></div>
+        <p id="exog-empty" class="hint" hidden>Aucune colonne numérique commune aux deux fichiers.</p>
+      </div>
+    </section>
+
+    <section class="panel" id="run-panel" hidden>
+      <h2>3. Essai</h2>
+      <div class="field-row kaggle-fields">
+        <div class="field">
+          <label for="model-select">Modèle</label>
+          <select id="model-select">
+            <option value="lightgbm">LightGBM (modèle global)</option>
+            <option value="sarimax">SARIMAX (un modèle par série)</option>
+            <option value="prophet">Prophet (un modèle par série)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="model-config">Configuration</label>
+          <select id="model-config"></select>
+        </div>
+        <div class="field">
+          <label for="metric-select">Métrique de la compétition</label>
+          <select id="metric-select">
+            <option value="rmsle">RMSLE</option>
+            <option value="rmse">RMSE</option>
+            <option value="mae">MAE</option>
+            <option value="smape">SMAPE</option>
+          </select>
+        </div>
+      </div>
+      <p class="hint" id="model-hint"></p>
+      <div class="kaggle-actions">
+        <button type="button" id="backtest-btn">Backtest local</button>
+        <button type="button" id="submission-btn" class="btn-outline">Générer la soumission</button>
+      </div>
+      <div id="run-progress" class="progress-bar" hidden>
+        <div id="run-progress-fill" class="progress-bar-fill"></div>
+      </div>
+      <p id="run-status" class="status"></p>
+      <div id="run-result" hidden>
+        <p id="run-summary" class="backtest-summary"></p>
+        <div class="metrics" id="run-metrics"></div>
+      </div>
+    </section>
+
+    <section class="panel" id="runs-panel" hidden>
+      <h2>4. Essais <span id="runs-competition" class="kaggle-badge"></span></h2>
+      <p class="hint">
+        Score local = backtest sur les derniers jours connus : il compare les essais entre eux, pas au classement
+        Kaggle. Une fois une soumission envoyée sur le site, reporte ici ses scores officiels.
+      </p>
+      <div class="table-scroll">
+        <table id="runs-table">
+          <thead>
+            <tr>
+              <th>#</th><th>Date</th><th>Type</th><th>Modèle</th><th>Exogènes</th>
+              <th id="runs-metric-head">Local</th><th>vs naïf</th><th>Kaggle public</th><th>Kaggle privé</th><th>Note</th><th></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p id="runs-status" class="status"></p>
+    </section>
+  </main>
+
+  <script src="auth-guard.js"></script>
+  <script src="model-params.js"></script>
+  <script src="menu.js"></script>
+  <script src="kaggle.js"></script>
+</body>
+</html>

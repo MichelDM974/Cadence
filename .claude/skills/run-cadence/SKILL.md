@@ -37,13 +37,15 @@ l'API :
 ```
 
 Sortie attendue : une ligne `[ok ]` par vérification (session, compte,
-décomposition, prévision), puis `smoke : OK`. `smoke` n'utilise que la
+décomposition, prévision, backtest Kaggle), puis `smoke : OK`. `smoke` n'utilise que la
 stdlib : aucune dépendance à installer.
 
 ## Captures d'écran et parcours dans l'interface
 
 `ui` se connecte, **clique sur "Analyser"**, attend les graphes, puis
-photographie l'accueil, l'analyse, la page théorie et la page modèles.
+photographie l'accueil, l'analyse, la page théorie et la page modèles,
+puis lance un vrai backtest sur la page Kaggle (mini-compétition générée) et
+la photographie en largeur bureau et téléphone.
 
 Playwright n'est pas une dépendance du projet — l'installer à part pour ne
 pas polluer le venv :
@@ -55,7 +57,8 @@ python3 -m venv /tmp/pwenv && /tmp/pwenv/bin/pip install playwright
 
 Sortie attendue : connexion, nombre de graphes et de formules KaTeX rendus,
 puis `erreurs JS : aucune`. Les captures atterrissent dans `--out` : `01-accueil.png`,
-`02-analyse.png`, `03-theorie.png`, `04-modeles.png`. **Les regarder** —
+`02-analyse.png`, `03-theorie.png`, `04-modeles.png`, `05-kaggle.png`,
+`06-kaggle-mobile.png` (largeur de page sur téléphone affichée : doit valoir 390). **Les regarder** —
 une image vide ou une page d'erreur veut dire que le lancement a échoué
 malgré un code de sortie à 0.
 

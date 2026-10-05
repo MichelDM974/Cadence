@@ -1020,6 +1020,161 @@ th, td {
   color: var(--text);
 }
 
+/* --- Page Kaggle ------------------------------------------------------ */
+
+.kaggle-fields .field {
+  flex: 1 1 240px;
+  min-width: 200px;
+  max-width: 340px;
+}
+
+.kaggle-fields .field select,
+.kaggle-fields .field input {
+  width: 100%;
+  max-width: none;
+}
+
+.checkbox-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 4px;
+}
+
+.checkbox-line code {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.kaggle-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 6px 0 4px;
+}
+
+.kaggle-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.kaggle-check:has(input:checked) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.kaggle-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.kaggle-actions button + button {
+  margin-left: 0;
+}
+
+/* Bouton secondaire : contour accent, fond transparent. */
+.btn-outline {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.btn-outline:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+.btn-outline:disabled {
+  border-color: var(--disabled-bg);
+}
+
+.metric--active {
+  outline: 2px solid var(--accent);
+}
+
+.metric--active .metric-value {
+  color: var(--accent);
+}
+
+.kaggle-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.8rem;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+#runs-table td {
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.run-mode {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+}
+
+.run-mode--backtest {
+  color: var(--accent-2);
+  border: 1px solid var(--accent-2);
+}
+
+.run-mode--submission {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+#runs-table .is-best {
+  color: var(--accent-3);
+  font-weight: 700;
+}
+
+#runs-table input.run-input {
+  margin: 0;
+  padding: 4px 8px;
+  font-size: 0.88rem;
+}
+
+#runs-table input.run-score {
+  width: 92px;
+}
+
+#runs-table input.run-note {
+  width: 180px;
+}
+
+.run-delete {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  padding: 3px 9px;
+  font-size: 0.8rem;
+}
+
+.run-delete:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
 /* En fin de fichier : doit l'emporter sur les règles de base (main...). */
 /* Téléphone : titre et ⚙ sur une ligne, pages en dessous sur toute la largeur. */
 @media (max-width: 760px) {

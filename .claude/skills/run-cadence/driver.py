@@ -131,6 +131,28 @@ def csv_demo(jours=140):
     return "\n".join(lignes).encode()
 
 
+def kaggle_demo(jours=120, horizon=14):
+    """Mini-compétition au format *Store Sales* (train + test, 2 magasins ×
+    2 familles, une exogène connue à l'avance) : assez petite pour qu'un
+    backtest LightGBM tienne en quelques secondes."""
+    train, test = ["date,store_nbr,family,onpromotion,sales"], ["id,date,store_nbr,family,onpromotion"]
+    base = time.mktime(time.strptime("2024-01-01", "%Y-%m-%d"))
+    n = 0
+    for i in range(jours + horizon):
+        jour = time.localtime(base + i * 86400)
+        date = time.strftime("%Y-%m-%d", jour)
+        for magasin in (1, 2):
+            for famille in ("A", "B"):
+                promo = int((i * magasin + len(famille)) % 5 == 0)
+                if i < jours:
+                    ventes = 20 * magasin + 10 * (jour.tm_wday >= 5) + 6 * promo + (i % 3)
+                    train.append(f"{date},{magasin},{famille},{promo},{ventes}")
+                else:
+                    test.append(f"{n},{date},{magasin},{famille},{promo}")
+                    n += 1
+    return "\n".join(train).encode(), "\n".join(test).encode()
+
+
 # --- smoke -----------------------------------------------------------
 
 def commande_smoke(args):
@@ -176,6 +198,27 @@ def commande_smoke(args):
         prevision = json.loads(corps)["prevision"]
         detail = f"{len(prevision)} jours, 1er = {prevision[0]}"
     verifier("prévision SARIMAX", 200, code, detail)
+
+    train, test = kaggle_demo()
+    code, corps = c.post(
+        "/api/kaggle/start",
+        {"competition": "driver-demo", "mode": "backtest", "model": "lightgbm", "date_col": "date",
+         "target_col": "sales", "entity_cols": "store_nbr,family", "id_col": "id", "exog_cols": "onpromotion"},
+        {"train_file": ("train.csv", train), "test_file": ("test.csv", test)},
+    )
+    detail, statut = "", "error"
+    if code == 200:
+        job_id = json.loads(corps)["job_id"]
+        for _ in range(120):
+            _, corps = c.get(f"/api/kaggle/progress/{job_id}")
+            suivi = json.loads(corps)
+            statut = suivi["status"]
+            if statut != "running":
+                break
+            time.sleep(0.5)
+        detail = (f"RMSLE {suivi['result']['scores']['model']['rmsle']:.4f}" if statut == "done"
+                  else suivi.get("error") or "")
+    verifier("backtest Kaggle (LightGBM)", "done", statut, detail)
 
     print("\nsmoke :", "OK" if ok else "ECHEC")
     return 0 if ok else 1
@@ -247,6 +290,25 @@ def commande_ui(args):
         page.goto(f"{base}/models.html")
         page.wait_for_timeout(1500)
         page.screenshot(path=str(sortie / "04-modeles.png"), full_page=True)
+
+        # Page Kaggle : fichiers -> colonnes proposées -> backtest réel.
+        train, test = kaggle_demo()
+        page.goto(f"{base}/kaggle.html")
+        page.fill("#competition-input", "driver-demo")
+        page.dispatch_event("#competition-input", "change")
+        page.set_input_files("#train-file", {"name": "train.csv", "mimeType": "text/csv", "buffer": train})
+        page.set_input_files("#test-file", {"name": "test.csv", "mimeType": "text/csv", "buffer": test})
+        page.wait_for_selector("#mapping-panel:not([hidden])", timeout=60000)
+        page.click("#backtest-btn")
+        page.wait_for_selector("#run-result:not([hidden])", timeout=120000)
+        page.wait_for_timeout(800)
+        page.screenshot(path=str(sortie / "05-kaggle.png"), full_page=True)
+        print(f"  page Kaggle : {page.inner_text('#run-summary')[:90]}...")
+        page.set_viewport_size({"width": 390, "height": 900})
+        page.wait_for_timeout(300)
+        page.screenshot(path=str(sortie / "06-kaggle-mobile.png"), full_page=True)
+        largeur = page.evaluate("document.documentElement.scrollWidth")
+        print(f"  largeur de page sur téléphone : {largeur}px (attendu 390)")
 
         nav.close()
 
