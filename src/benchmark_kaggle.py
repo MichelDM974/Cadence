@@ -16,6 +16,8 @@ Variantes : cf. VARIANTS ci-dessous (combinables avec « + », ex.
 """
 
 import argparse
+import hashlib
+import json
 import os
 import time
 from pathlib import Path
@@ -24,6 +26,7 @@ import pandas as pd
 
 import api
 import kaggle_competition as kc
+from lightgbm_forecast import HOMOGENEOUS_PANEL_NUM_BOOST_ROUND, HOMOGENEOUS_PANEL_PARAMS
 
 RACINE = Path(__file__).resolve().parent.parent
 DATASETS = {
@@ -56,7 +59,55 @@ VARIANTS = {
                                           "lambda_l2": 0.05, "num_boost_round": 1200}}, {}),
     "sarimax": ("sarimax", {}, {}),
     "ens_lgb_sarimax": ("lightgbm", {}, {"ensemble": [["lightgbm", 0.5], ["sarimax", 0.5]]}),
+    "ens_lgb30": ("lightgbm", {}, {"ensemble": [["lightgbm", 0.3], ["sarimax", 0.7]]}),
+    "ens_lgb40": ("lightgbm", {}, {"ensemble": [["lightgbm", 0.4], ["sarimax", 0.6]]}),
+    "ens_lgb70": ("lightgbm", {}, {"ensemble": [["lightgbm", 0.7], ["sarimax", 0.3]]}),
+    "ens_lgb80": ("lightgbm", {}, {"ensemble": [["lightgbm", 0.8], ["sarimax", 0.2]]}),
+    "ens_lgb90": ("lightgbm", {}, {"ensemble": [["lightgbm", 0.9], ["sarimax", 0.1]]}),
 }
+
+
+# Réglage autour du profil « panel homogène » : un paramètre LightGBM passé
+# désactive le profil auto, chaque variante repart donc du profil complet.
+BIG = {**HOMOGENEOUS_PANEL_PARAMS, "num_boost_round": HOMOGENEOUS_PANEL_NUM_BOOST_ROUND}
+TUNING = {
+    "tw12": {"tweedie_variance_power": 1.2},
+    "tw13": {"tweedie_variance_power": 1.3},
+    "tw14": {"tweedie_variance_power": 1.4},
+    "tw15": {"tweedie_variance_power": 1.5},
+    "tw16": {"tweedie_variance_power": 1.6},
+    "ff6": {"feature_fraction": 0.6},
+    "mdl30": {"min_data_in_leaf": 30},
+    "l2_1": {"lambda_l2": 1.0},
+    "leaves127": {"num_leaves": 127},
+    "lr02": {"learning_rate": 0.02, "num_boost_round": 1800},
+    "lr05": {"learning_rate": 0.05, "num_boost_round": 720},
+}
+VARIANTS.update({name: ("lightgbm", {"lightgbm": {**BIG, **p}}, {}) for name, p in TUNING.items()})
+
+
+def cache_member_forecasts(cache_dir: Path) -> None:
+    """Garde sur disque les prévisions de chaque membre (modèle, réglages,
+    fenêtre) : un balayage de poids d'ensemble ne réentraîne alors rien.
+    Clé = tout ce qui fait varier la prévision d'un membre."""
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    original = api._kaggle_forecast_rows
+
+    def cached(job, history, spec, horizon, model, model_params, exog_long, entities):
+        key = json.dumps([
+            # réglages de ce seul membre : régler LightGBM ne refait pas SARIMAX
+            str(history[spec.date_col].max()), len(history), horizon, model,
+            {model: model_params[model]} if model in model_params else {},
+            list(spec.exog_cols) if exog_long is not None else [], len(entities),
+        ], sort_keys=True, default=str)
+        path = cache_dir / f"{model}-{hashlib.sha1(key.encode()).hexdigest()[:16]}.pkl"
+        if path.exists():
+            return pd.read_pickle(path)
+        rows = original(job, history, spec, horizon, model, model_params, exog_long, entities)
+        pd.to_pickle(rows, path)
+        return rows
+
+    api._kaggle_forecast_rows = cached
 
 
 def combine(name: str) -> tuple[str, dict, dict]:
@@ -93,7 +144,10 @@ def main() -> None:
     parser.add_argument("variants", nargs="+")
     parser.add_argument("--folds", type=int, default=3)
     parser.add_argument("--no-yoy", action="store_true", help="sans la fenêtre « même période l'an dernier »")
+    parser.add_argument("--cache", type=Path, help="dossier où garder les prévisions de chaque membre")
     args = parser.parse_args()
+    if args.cache:
+        cache_member_forecasts(args.cache / args.dataset)
 
     train, spec, keys, horizon, scored_days, exog_long = load(args.dataset)
     end = train[spec.date_col].max()
