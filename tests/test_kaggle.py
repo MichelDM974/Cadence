@@ -230,6 +230,21 @@ def test_parcours_kaggle_backtest_puis_soumission():
     assert len(client.get("/api/kaggle/runs").json()) == 1
 
 
+def test_ensemble_lightgbm_sarimax():
+    client = TestClient(app)
+    connecter(client)
+    train, test = make_competition(n_days=60, test_days=7)
+    resp = client.post("/api/kaggle/start", files=_files(train, test),
+                       data={**MAPPING, "model": "ensemble", "mode": "backtest"})
+    assert resp.status_code == 200, resp.text
+    progress = _attendre(client, resp.json()["job_id"])
+    assert progress["status"] == "done", progress["error"]
+    assert progress["result"]["n_fallback"] == 0
+    run = client.get("/api/kaggle/runs").json()[0]
+    assert run["model"] == "ensemble"
+    assert run["config"]["options"]["ensemble"] == [["lightgbm", 0.5], ["sarimax", 0.5]]
+
+
 def test_job_et_essais_isoles_par_compte():
     import storage
 

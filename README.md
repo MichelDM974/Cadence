@@ -25,7 +25,7 @@ Généraliste dès le départ : le moteur (décomposition + prévision) et l'imp
 - Variables exogènes mondiales, activables individuellement par l'utilisateur : jours fériés (tous pays), météo (historique réelle + normales saisonnières), vacances scolaires (France, par académie)
 - Import CSV multi-entités (jusqu'à 2 dimensions de regroupement, ex. magasin × catégorie), avec génération de prévisions en masse pour toutes les combinaisons
 - Variables exogènes personnalisées : colonnes numériques déjà présentes dans le fichier importé, ou un second fichier externe joint automatiquement (série globale ou par entité, y compris valeurs futures réelles)
-- Page Kaggle (compétitions de séries temporelles) : train + test (.csv/.zip/.gz) → correspondance de colonnes proposée → backtest local qui rejoue l'horizon réel du test (RMSLE, RMSE, MAE, SMAPE face au naïf saisonnier) → fichier de soumission ; historique des essais par compétition, avec les scores Kaggle officiels reportés
+- Page Kaggle (compétitions de séries temporelles) : train + test (.csv/.zip/.gz) → correspondance de colonnes proposée → backtest local qui rejoue l'horizon réel du test (RMSLE, RMSE, MAE, SMAPE face au naïf saisonnier) → fichier de soumission, par défaut avec l'ensemble LightGBM + SARIMAX ; historique des essais par compétition, avec les scores Kaggle officiels reportés
 - Persistance locale (SQLite) des points de vente/séries analysées, réutilisables sans réimport
 - Hyperparamètres des 3 modèles éditables depuis l'interface
 - Mode sombre
@@ -47,13 +47,15 @@ Et sur *Store Sales - Time Series Forecasting* (54 magasins × 33 catégories, 1
 
 | Configuration | RMSLE |
 |---|---|
-| LightGBM, configuration affinée* | **0.42475** |
+| Ensemble LightGBM + SARIMAX (page Kaggle, défaut)* | **0.41075** |
+| LightGBM seul, page Kaggle | 0.42150 |
+| LightGBM, script dédié | 0.42475 |
 | SARIMAX seul (aucun exogène) | 0.42726 |
 | SARIMAX + `onpromotion` (jointure par entité) | 0.44460 |
 | Prophet + `onpromotion` (jointure par entité) | 0.51275 |
 | LightGBM + `onpromotion` (jointure par entité, génération en masse) | 0.55166 |
 
-\* meilleur score obtenu à ce jour (banc d'essai indépendant, cf. `src/forecast_submission_lightgbm_store_sales.py`). L'objectif tweedie qui explique l'essentiel du gain est repris dans l'app depuis le 2026-09-03. Tendance annuelle (`yoy_trend`) et régularisation sont désormais auto-détectées selon l'hétérogénéité des historiques par entité (2026-09-07, cf. BENCHMARKS.md) ; lags étendus restent opt-in (pas d'amélioration universelle constatée).
+\* meilleur score obtenu à ce jour, en pipeline générique : moyenne à parts égales d'un LightGBM global (profil « panel homogène » auto-détecté, tweedie 1.5) et de SARIMAX par série, séries éteintes prévues à 0, sans exogène (cf. BENCHMARKS.md). Tendance annuelle (`yoy_trend`) et régularisation sont désormais auto-détectées selon l'hétérogénéité des historiques par entité (2026-09-07, cf. BENCHMARKS.md) ; lags étendus restent opt-in (pas d'amélioration universelle constatée).
 
 (0.501 et 0.37294 respectivement en tête des leaderboards Kaggle, pour référence.) SARIMAX bat par ailleurs une baseline naïve ("même jour la semaine dernière") sur 91% des restaurants testés (amélioration médiane +28,4% sur le MAE).
 

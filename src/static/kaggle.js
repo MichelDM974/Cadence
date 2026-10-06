@@ -2,12 +2,16 @@
 // backtest local ou soumission -> historique des essais. el(), escapeHtml(),
 // loadPresets()... viennent de model-params.js ; setupSettingsMenu de menu.js.
 
-const MODEL_LABELS = { lightgbm: "LightGBM", sarimax: "SARIMAX", prophet: "Prophet" };
+const MODEL_LABELS = {
+  ensemble: "LightGBM + SARIMAX", lightgbm: "LightGBM", sarimax: "SARIMAX", prophet: "Prophet",
+};
 const METRIC_LABELS = { rmsle: "RMSLE", rmse: "RMSE", mae: "MAE", smape: "SMAPE" };
 const MODEL_HINTS = {
+  ensemble:
+    "Moyenne à parts égales de LightGBM et SARIMAX : la plus précise à ce jour (Store Sales, Recruit), " +
+    "mais aussi lente que SARIMAX, qu'elle ajuste en plus.",
   lightgbm:
-    "Un seul modèle entraîné sur toutes les séries à la fois : le plus rapide sur des milliers de séries, " +
-    "et le meilleur à ce jour sur Store Sales.",
+    "Un seul modèle entraîné sur toutes les séries à la fois : le plus rapide sur des milliers de séries.",
   sarimax: "Un ajustement par série, en parallèle : compter plusieurs minutes sur des milliers de séries.",
   prophet: "Un ajustement par série, en parallèle : le plus lent des trois sur des milliers de séries.",
 };
@@ -158,7 +162,8 @@ function updateCompositeFields() {
 // de paramètres explicite court-circuiterait.
 function refreshConfigSelect() {
   const model = el("model-select").value;
-  const presets = loadPresets()[model].filter((p) => !isDefaultPreset(p.id));
+  // L'ensemble n'a pas de configurations enregistrées : réglages par défaut de chaque membre.
+  const presets = (loadPresets()[model] || []).filter((p) => !isDefaultPreset(p.id));
   el("model-config").innerHTML = [
     `<option value="">Défaut Cadence (réglages automatiques)</option>`,
     ...presets.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`),
@@ -168,7 +173,7 @@ function refreshConfigSelect() {
 
 function selectedModelParams() {
   const model = el("model-select").value;
-  const preset = loadPresets()[model].find((p) => p.id === el("model-config").value);
+  const preset = (loadPresets()[model] || []).find((p) => p.id === el("model-config").value);
   if (!preset) return null;
   const p = preset.params;
   if (model === "sarimax") {
@@ -195,8 +200,9 @@ function pollJob(jobId) {
         if (p.status === "error") return reject(new Error(p.error || "Erreur"));
         if (p.status === "done") return resolve(p.result);
         setProgress(p.total ? p.processed / p.total : 0);
+        const step = p.step ? `${p.step} — ` : "";
         status.textContent = p.total
-          ? `En cours : ${p.processed}/${p.total} séries...`
+          ? `En cours : ${step}${p.processed}/${p.total} séries...`
           : "Préparation des données...";
         setTimeout(tick, 1000);
       } catch (err) {

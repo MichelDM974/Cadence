@@ -1743,6 +1743,11 @@ def api_point_autotune(
 # *Store Sales* : ~120 Mo) ; .zip/.gz acceptés tels que téléchargés.
 KAGGLE_MAX_UPLOAD_BYTES = 500 * 1024 * 1024
 KAGGLE_MODES = {"backtest", "submission"}
+# Modèle « ensemble » de la page (défaut depuis le 06/10/2026) : moyenne
+# LightGBM + SARIMAX à parts égales. Gagne sur Store Sales (0.41441 contre
+# 0.42150 officiel) et sur Recruit en local, où SARIMAX seul est pourtant
+# moins bon (cf. BENCHMARKS.md).
+KAGGLE_ENSEMBLE = [["lightgbm", 0.5], ["sarimax", 0.5]]
 # Séries sans aucune vente sur ce nombre de jours : prévues à 0. Active par
 # défaut (05/10/2026) : Store Sales 0.476 -> 0.461 (fenêtres récentes) et
 # 0.543 -> 0.528 (même période un an plus tôt), strictement neutre sur
@@ -1945,7 +1950,7 @@ async def api_kaggle_start(
         raise HTTPException(400, "Nom de compétition requis")
     if mode not in KAGGLE_MODES:
         raise HTTPException(400, f"Mode inconnu : {mode}")
-    if model not in BULK_MODELS:
+    if model not in BULK_MODELS and model != "ensemble":
         raise HTTPException(400, f"Modèle inconnu : {model}")
     try:
         spec = kc.CompetitionSpec(
@@ -1957,6 +1962,8 @@ async def api_kaggle_start(
         raise HTTPException(400, str(exc))
     params = parse_model_params(model_params)
     options = {"zero_dead_days": KAGGLE_ZERO_DEAD_DAYS} if zero_dead_series else {}
+    if model == "ensemble":
+        options["ensemble"] = KAGGLE_ENSEMBLE
 
     train_raw = await read_kaggle_table(train_file)
     test_raw = await read_kaggle_table(test_file)
@@ -1991,7 +1998,7 @@ def api_kaggle_progress(job_id: str, user: dict = Depends(current_user)):
     job = kaggle_job_or_404(job_id, user)
     return {
         "status": job["status"], "processed": job["processed"], "total": job["total"],
-        "error": job["error"], "result": job["result"],
+        "step": job.get("step"), "error": job["error"], "result": job["result"],
     }
 
 
