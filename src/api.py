@@ -1745,8 +1745,8 @@ KAGGLE_MAX_UPLOAD_BYTES = 500 * 1024 * 1024
 KAGGLE_MODES = {"backtest", "submission"}
 # Modèle « ensemble » de la page (défaut depuis le 06/10/2026) : moyenne
 # LightGBM + SARIMAX à parts égales. Gagne sur Store Sales (0.41441 contre
-# 0.42150 officiel) et sur Recruit en local, où SARIMAX seul est pourtant
-# moins bon (cf. BENCHMARKS.md).
+# 0.42150 officiel) et sur Recruit (0.55433 contre 0.57956 officiel), où
+# SARIMAX seul est pourtant moins bon que LightGBM (cf. BENCHMARKS.md).
 KAGGLE_ENSEMBLE = [["lightgbm", 0.5], ["sarimax", 0.5]]
 # Séries sans aucune vente sur ce nombre de jours : prévues à 0. Active par
 # défaut (05/10/2026) : Store Sales 0.476 -> 0.461 (fenêtres récentes) et

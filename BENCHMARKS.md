@@ -28,7 +28,9 @@ Deux types de scores, à ne pas confondre :
 
 | Configuration | Private RMSLE | Public RMSLE |
 |---|---|---|
-| SARIMAX + jour férié | **0.57956** | **0.51544** |
+| **Banc : ensemble 50/50 LightGBM + SARIMAX, séries éteintes à 0 (06/10/2026)** | **0.55433** | **0.49971** |
+| Banc : idem, 70 % LightGBM (06/10/2026) | 0.55560 | 0.50115 |
+| SARIMAX + jour férié | 0.57956 | 0.51544 |
 | SARIMAX seul (aucun exogène) | 0.58205 | 0.51553 |
 | SARIMAX + jour férié + météo | 0.59146 | 0.51875 |
 | Prophet + jour férié | 0.60576 | 0.55071 |
@@ -118,6 +120,12 @@ y est nettement moins bon que LightGBM :
 | SARIMAX seul | 0.62921 | 0.79539 |
 | ensemble 50 % | 0.58907 | 0.72788 |
 | **ensemble 70 %** | **0.58868** | **0.72554** |
+
+Chiffres an-1 ci-dessus mesurés avant une évolution du code non
+identifiée : remesurés le 06/10/2026 au soir (même cache, deux bancs
+concordants), l'ensemble 50 % donne 0.58907 / **0.74226** (récent
+inchangé). Kaggle a classé 50 % devant 70 % (tableau officiel), à
+l'inverse de l'écart local de 0.0004 : écart trop faible pour trancher.
 
 Kaggle a classé les trois soumissions dans l'ordre du banc (tableau
 officiel ci-dessus) : tweedie 1.5 passe dans le profil par défaut.
