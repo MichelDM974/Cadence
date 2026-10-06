@@ -68,7 +68,8 @@ VARIANTS = {
 
 
 # Réglage autour du profil « panel homogène » : un paramètre LightGBM passé
-# désactive le profil auto, chaque variante repart donc du profil complet.
+# désactive le profil auto, chaque variante repart donc du profil complet
+# (tweedie 1.5 depuis le 06/10/2026 : « tw15 » égale désormais le défaut).
 BIG = {**HOMOGENEOUS_PANEL_PARAMS, "num_boost_round": HOMOGENEOUS_PANEL_NUM_BOOST_ROUND}
 TUNING = {
     "tw12": {"tweedie_variance_power": 1.2},

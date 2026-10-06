@@ -39,7 +39,10 @@ Tête du leaderboard public, pour référence : 0.501.
 
 | Configuration | RMSLE |
 |---|---|
-| **Page Kaggle : LightGBM « gros » (255 feuilles, 0.03, 1200 it.) + séries éteintes à 0 (05/10/2026)** | **0.42150** |
+| **Banc : ensemble 50/50 LightGBM « gros » tweedie 1.5 + SARIMAX, séries éteintes à 0, sans exogène (06/10/2026)** | **0.41075** |
+| Banc : idem, tweedie 1.3 (06/10/2026) | 0.41209 |
+| Banc : idem, tweedie 1.1 (ensemble seul, 06/10/2026) | 0.41441 |
+| Page Kaggle : LightGBM « gros » (255 feuilles, 0.03, 1200 it.) + séries éteintes à 0 (05/10/2026) | 0.42150 |
 | Script dédié `forecast_submission_lightgbm_store_sales.py`, tweedie (03/09/2026) | 0.42475 |
 | Page Kaggle : LightGBM défaut, sans exogène (05/10/2026) | 0.46408 |
 | Page Kaggle : LightGBM défaut + `onpromotion` futur de test.csv (05/10/2026) | 0.53171 |
@@ -115,6 +118,9 @@ y est nettement moins bon que LightGBM :
 | SARIMAX seul | 0.62921 | 0.79539 |
 | ensemble 50 % | 0.58907 | 0.72788 |
 | **ensemble 70 %** | **0.58868** | **0.72554** |
+
+Kaggle a classé les trois soumissions dans l'ordre du banc (tableau
+officiel ci-dessus) : tweedie 1.5 passe dans le profil par défaut.
 
 La puissance tweedie ne touche que le profil « panel homogène » : sans
 effet sur Recruit, auto-détecté hétérogène.

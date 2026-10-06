@@ -97,7 +97,12 @@ REDUCED_REGULARIZATION_PARAMS = {"min_data_in_leaf": 10, "lambda_l2": 0.05}
 # 0) ; sur Recruit (historiques inégaux) il dégradait (0.575 -> 0.580) et
 # entraînait 18x plus lentement : réservé au même signal que la
 # régularisation réduite, qu'il remplace.
-HOMOGENEOUS_PANEL_PARAMS = {**REDUCED_REGULARIZATION_PARAMS, "learning_rate": 0.03, "num_leaves": 255}
+# Tweedie 1.5 (06/10/2026) : seul axe gagnant d'une grille autour de ce
+# profil (cf. BENCHMARKS.md) ; Store Sales 0.41441 -> 0.41075 officiel, en
+# ensemble avec SARIMAX. 1.6 recule, les autres axes perdent.
+HOMOGENEOUS_PANEL_PARAMS = {
+    **REDUCED_REGULARIZATION_PARAMS, "learning_rate": 0.03, "num_leaves": 255, "tweedie_variance_power": 1.5,
+}
 HOMOGENEOUS_PANEL_NUM_BOOST_ROUND = 1200
 
 
