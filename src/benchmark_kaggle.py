@@ -145,6 +145,8 @@ def main() -> None:
     parser.add_argument("--folds", type=int, default=3)
     parser.add_argument("--no-yoy", action="store_true", help="sans la fenêtre « même période l'an dernier »")
     parser.add_argument("--cache", type=Path, help="dossier où garder les prévisions de chaque membre")
+    parser.add_argument("--submit", type=Path,
+                        help="au lieu du backtest : écrit dans ce dossier le fichier de soumission de chaque variante")
     args = parser.parse_args()
     if args.cache:
         cache_member_forecasts(args.cache / args.dataset)
@@ -168,6 +170,18 @@ def main() -> None:
         no_exog = options.pop("_no_exog", False)
         run_spec = kc.CompetitionSpec(**{**DATASETS[args.dataset]["spec"], "exog_cols": []}) if no_exog else spec
         run_exog = None if no_exog else exog_long
+        if args.submit:
+            # même enchaînement que le mode « soumission » de la page (_run_kaggle_job)
+            start = time.time()
+            entities = keys[spec.entity_cols].drop_duplicates()
+            history = kc.pad_to(train, spec, train[spec.date_col].max())
+            preds = api.kaggle_predict({}, history, run_spec, horizon, model, params, run_exog, entities, options)
+            values, n_fallback = kc.attach_predictions(keys, preds, history, spec, bool(train[spec.target_col].min() >= 0))
+            args.submit.mkdir(parents=True, exist_ok=True)
+            out = args.submit / f"{args.dataset}-{name.replace('+', '_')}.csv"
+            out.write_text(kc.submission_csv(keys, values, spec))
+            print(f"{name:<24} -> {out}  ({n_fallback} repli(s), {time.time() - start:.0f}s)", flush=True)
+            continue
         scores = {}
         start = time.time()
         for label, fold_end in windows:

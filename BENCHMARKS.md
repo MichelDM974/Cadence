@@ -76,6 +76,49 @@ score officiel (cf. tableau Kaggle ci-dessus).
 en local, 0.464 -> 0.4215 officiel) ; elle reste approximative sur
 l'ampleur (exogène : 0.001 en local, 0.068 officiel).
 
+### Ensemble LightGBM + SARIMAX et réglage tweedie (06/10/2026, `benchmark_kaggle.py --cache`)
+
+Même banc (3 fenêtres récentes + an-1), séries éteintes à 0 partout,
+**avec `onpromotion`** (spec du banc) : les écarts entre variantes
+comptent, pas le niveau. Ensemble = moyenne pondérée des prévisions
+(`options["ensemble"]`), poids = part de LightGBM.
+
+Store Sales :
+
+| Variante | Récent | an-1 |
+|---|---|---|
+| LightGBM « gros » (référence) | 0.42516 | 0.49236 |
+| SARIMAX seul (sans séries éteintes) | 0.42394 | 0.49999 |
+| ensemble 90 % LightGBM | 0.42063 | 0.48761 |
+| ensemble 80 % | 0.41676 | 0.48363 |
+| ensemble 70 % | 0.41358 | 0.48043 |
+| **ensemble 50 %** | **0.40957** | **0.47669** |
+| tweedie 1.3 (au lieu de 1.1) | 0.41769 | 0.48212 |
+| tweedie 1.5 | 0.41293 | 0.48279 |
+| tweedie 1.3 + ensemble 50 % | 0.40631 | **0.47306** |
+| **tweedie 1.5 + ensemble 50 %** | **0.40430** | 0.47319 |
+| tweedie 1.5 + ensemble 40 % | 0.40504 | 0.47427 |
+
+Sur une fenêtre récente seule (tri), 40 % ≈ 50 % > 30 % pour l'ensemble ;
+tweedie 1.2 < 1.3 ≈ 1.4 ≈ 1.5 > 1.6. Les autres axes de la grille autour du
+profil « panel homogène » (feature_fraction 0.6, min_data_in_leaf 30,
+lambda_l2 1.0, num_leaves 127, learning_rate 0.02 ou 0.05 à budget
+équivalent) perdent tous sur la fenêtre récente : le profil était déjà
+bien placé, la puissance tweedie est le seul levier trouvé.
+
+Recruit (même banc, 39 j) — l'ensemble gagne aussi, alors que SARIMAX seul
+y est nettement moins bon que LightGBM :
+
+| Variante | Récent | an-1 |
+|---|---|---|
+| LightGBM (défaut, séries éteintes neutres) | 0.59721 | 0.74713 |
+| SARIMAX seul | 0.62921 | 0.79539 |
+| ensemble 50 % | 0.58907 | 0.72788 |
+| **ensemble 70 %** | **0.58868** | **0.72554** |
+
+La puissance tweedie ne touche que le profil « panel homogène » : sans
+effet sur Recruit, auto-détecté hétérogène.
+
 ### Store Sales — exogène future lue dans test.csv (05/10/2026, page Kaggle)
 
 Même backtest LightGBM (défaut app, 16 derniers jours), lancé depuis la
@@ -179,6 +222,8 @@ toute façon désactivé ici par l'auto-détection (historique homogène).
 
 ```
 cd src
+python benchmark_kaggle.py store-sales dead14 dead14+ens_lgb_sarimax --cache /tmp/cadence-cache
+python benchmark_kaggle.py store-sales noexog+dead14+ens_lgb_sarimax --cache /tmp/cadence-cache --submit ~/soumissions
 python benchmark_lightgbm_variants.py both   # LightGBM, les deux datasets
 python forecast_submission_sarimax_ferie.py  # SARIMAX, soumission Kaggle Recruit
 python forecast_submission_lightgbm_recruit.py
