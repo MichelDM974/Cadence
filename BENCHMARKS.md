@@ -133,6 +133,45 @@ officiel ci-dessus) : tweedie 1.5 passe dans le profil par défaut.
 La puissance tweedie ne touche que le profil « panel homogène » : sans
 effet sur Recruit, auto-détecté hétérogène.
 
+### Poids d'ensemble appris par série — ticket #10 (09/10/2026, `benchmark_ensemble_weights.py`)
+
+Même banc (3 fenêtres récentes + an-1), séries éteintes à 0, **sans
+exogène** (config des soumissions retenues : niveaux non comparables au
+tableau précédent). Poids = part de LightGBM, appris uniquement sur les 3
+fenêtres de backtest qui **précèdent** la fenêtre notée (ce qu'on aurait au
+moment de soumettre). `serieN` = meilleur poids de la série rétréci à N %
+vers le poids global ; `fforma` = méta-modèle LightGBM prédisant le poids
+d'une série depuis ses descripteurs (longueur, niveau, CV, zéros,
+saisonnalité hebdo, tendance, écart entre membres) ; `oracle` = meilleur
+poids par série a posteriori (plafond).
+
+Store Sales — FFORMA gagne sur **les quatre fenêtres** :
+
+| Méthode | -0 j | -16 j | -32 j | Récent | an-1 |
+|---|---|---|---|---|---|
+| 50/50 (défaut page) | 0.47316 | 0.41660 | 0.39472 | 0.42816 | 0.48633 |
+| poids global | 0.46916 | 0.41567 | 0.39396 | 0.42626 | 0.48510 |
+| série 50 % | 0.46727 | 0.41349 | 0.39149 | 0.42408 | 0.48387 |
+| **FFORMA** | 0.46829 | **0.41002** | **0.38569** | **0.42133** | **0.48065** |
+| oracle | 0.44673 | 0.39943 | 0.37525 | 0.40714 | 0.46374 |
+
+Recruit (39 j) — rien ne bat le 50/50 :
+
+| Méthode | -0 j | -39 j | -78 j | Récent | an-1 |
+|---|---|---|---|---|---|
+| **50/50** | 0.56550 | **0.56478** | 0.63692 | 0.58907 | **0.74226** |
+| poids global | 0.56619 | 0.56991 | 0.63077 | 0.58896 | 0.79879 |
+| série 50 % | 0.56235 | 0.56539 | 0.63007 | **0.58594** | 0.77102 |
+| FFORMA | **0.56128** | 0.56806 | 0.63702 | 0.58878 | 0.76134 |
+| oracle | 0.54143 | 0.54530 | 0.60095 | 0.56256 | 0.71615 |
+
+Sur Recruit, l'an-1 ne dispose que d'**une** fenêtre d'apprentissage
+(historique trop court) : poids global appris = 1.00 (tout LightGBM),
+et toutes les méthodes apprises s'effondrent. Sur les fenêtres récentes
+(3 fenêtres d'apprentissage), FFORMA est neutre (0.58878 vs 0.58907),
+gagnant une fois sur trois. Coût : 3 backtests de plus par soumission
+(Store Sales ≈ 25 min chacun, SARIMAX dominant).
+
 ### Store Sales — exogène future lue dans test.csv (05/10/2026, page Kaggle)
 
 Même backtest LightGBM (défaut app, 16 derniers jours), lancé depuis la
