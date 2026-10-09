@@ -20,6 +20,10 @@ Les prévisions des membres passent par le cache de benchmark_kaggle.py
 (mêmes clés) : relancer ne réentraîne rien.
 
     python benchmark_ensemble_weights.py store-sales --cache /tmp/cadence-cache
+
+`--submit DIR` : au lieu du banc, écrit le fichier de soumission FFORMA,
+méta-modèle appris sur les `--train-windows` fenêtres les plus récentes
+(celles du banc : déjà en cache).
 """
 
 import argparse
@@ -48,6 +52,13 @@ def window_data(train, spec, keys, horizon, scored_days, exog_long, fold_end):
     history, truth = kc.backtest_split(sub, spec, horizon, scored_days)
     targets = truth.merge(entities, on=spec.entity_cols)
     history = kc.pad_to(history, spec, history[spec.date_col].max())
+    df = member_frame(targets, history, spec, horizon, exog_long, entities)
+    return df, descriptors(history, spec, df)
+
+
+def member_frame(targets, history, spec, horizon, exog_long, entities) -> pd.DataFrame:
+    """Une ligne par ligne de `targets` (ordre conservé) : prévision de
+    chaque membre, série éteinte ou non (`_alive`) et clé de série."""
     frames = {}
     for member in MEMBERS:
         rows = api._kaggle_forecast_rows({}, history, spec, horizon, member, {}, exog_long, entities)
@@ -71,7 +82,7 @@ def window_data(train, spec, keys, horizon, scored_days, exog_long, fold_end):
     df = df.merge(dead.rename(columns={"prevision": "_alive"}), on=on, how="left")
     df["_alive"] = df["_alive"].fillna(1.0)
     df["_key"] = df[spec.entity_cols].astype(str).agg("|".join, axis=1)
-    return df, descriptors(history, spec, df)
+    return df
 
 
 def descriptors(history, spec, df) -> pd.DataFrame:
@@ -134,8 +145,16 @@ def evaluate(target, history_windows):
         w = (s * w_series + (1 - s) * w_global).reindex(df["_key"]).fillna(w_global).to_numpy()
         scores[f"serie{int(s * 100)}"] = rmsle(df, w)
 
-    # FFORMA : une ligne par (série, fenêtre d'apprentissage) ; cible = poids
-    # optimal, pondérée par ce que le choix du poids change pour la série.
+    meta = fit_fforma(history_windows)
+    w_meta = pd.Series(np.clip(meta.predict(feats), 0, 1), index=feats.index)
+    scores["fforma"] = rmsle(df, w_meta.reindex(df["_key"]).fillna(w_global).to_numpy())
+    scores["oracle"] = float(np.sqrt(series_sse(df).min(axis=1).sum() / len(df)))
+    return scores, w_global
+
+
+def fit_fforma(history_windows) -> lgb.Booster:
+    """FFORMA : une ligne par (série, fenêtre d'apprentissage) ; cible = poids
+    optimal, pondérée par ce que le choix du poids change pour la série."""
     xs, ys, ws = [], [], []
     for d, f in history_windows:
         # séries ouvertes pendant la fenêtre notée : aucun historique à décrire
@@ -145,15 +164,11 @@ def evaluate(target, history_windows):
         ys.append(s.idxmin(axis=1).astype(float))
         ws.append(s.max(axis=1) - s.min(axis=1))
     x, y, sw = pd.concat(xs), pd.concat(ys), pd.concat(ws)
-    meta = lgb.train(
+    return lgb.train(
         {"objective": "regression", "learning_rate": 0.05, "num_leaves": 15, "min_data_in_leaf": 50,
          "feature_fraction": 0.8, "verbose": -1, "seed": 0},
         lgb.Dataset(x, y, weight=sw.clip(lower=1e-6)), num_boost_round=200,
     )
-    w_meta = pd.Series(np.clip(meta.predict(feats), 0, 1), index=feats.index)
-    scores["fforma"] = rmsle(df, w_meta.reindex(df["_key"]).fillna(w_global).to_numpy())
-    scores["oracle"] = float(np.sqrt(series_sse(df).min(axis=1).sum() / len(df)))
-    return scores, w_global
 
 
 def main() -> None:
@@ -162,6 +177,8 @@ def main() -> None:
     parser.add_argument("--folds", type=int, default=3)
     parser.add_argument("--train-windows", type=int, default=3)
     parser.add_argument("--cache", type=Path)
+    parser.add_argument("--submit", type=Path,
+                        help="au lieu du banc : écrit dans ce dossier la soumission FFORMA")
     parser.add_argument("--with-exog", action="store_true",
                         help="garder les exogènes du jeu (défaut : sans, comme les soumissions retenues)")
     args = parser.parse_args()
@@ -184,6 +201,26 @@ def main() -> None:
                                         end - pd.Timedelta(days=offset))
             print(f"  fenêtre -{offset} j prête ({time.time() - start:.0f}s)", flush=True)
         return cache[offset]
+
+    if args.submit:
+        past = [window(k * scored_days) for k in range(args.train_windows)]
+        sse = pd.concat([series_sse(d) for d, _ in past]).groupby(level=0).sum()
+        w_global = float(sse.sum().idxmin())
+        meta = fit_fforma(past)
+        # même enchaînement que le mode « soumission » de la page (_run_kaggle_job)
+        entities = keys[spec.entity_cols].drop_duplicates()
+        history = kc.pad_to(train, spec, train[spec.date_col].max())
+        df = member_frame(keys[[*spec.entity_cols, "date"]], history, spec, horizon, exog_long, entities)
+        feats = descriptors(history, spec, df)
+        w_meta = pd.Series(np.clip(meta.predict(feats), 0, 1), index=feats.index)
+        w = w_meta.reindex(df["_key"]).fillna(w_global).to_numpy()
+        args.submit.mkdir(parents=True, exist_ok=True)
+        out = args.submit / f"{args.dataset}-fforma.csv"
+        out.write_text(kc.submission_csv(keys, pd.Series(blend(df, w)), spec))
+        q = np.quantile(w_meta, [0.1, 0.5, 0.9])
+        print(f"-> {out}  (global {w_global:.2f}, part LightGBM par série p10/p50/p90 "
+              f"{q[0]:.2f}/{q[1]:.2f}/{q[2]:.2f})")
+        return
 
     results = {}
     for label, offset in targets:
