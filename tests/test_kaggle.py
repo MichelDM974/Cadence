@@ -243,6 +243,19 @@ def test_ensemble_lightgbm_sarimax():
     run = client.get("/api/kaggle/runs").json()[0]
     assert run["model"] == "ensemble"
     assert run["config"]["options"]["ensemble"] == [["lightgbm", 0.5], ["sarimax", 0.5]]
+    assert run["config"]["options"]["ensemble_weights"] == "fforma"  # poids appris par défaut
+
+
+def test_ensemble_poids_fixes_si_poids_appris_decoches():
+    client = TestClient(app)
+    connecter(client)
+    train, test = make_competition(n_days=60, test_days=7)
+    data = {**MAPPING, "model": "ensemble", "mode": "backtest", "learned_weights": "false",
+            "competition": "poids-fixes"}
+    progress = _attendre(client, client.post("/api/kaggle/start", files=_files(train, test), data=data).json()["job_id"])
+    assert progress["status"] == "done", progress["error"]
+    run = client.get("/api/kaggle/runs", params={"competition": "poids-fixes"}).json()[0]
+    assert "ensemble_weights" not in run["config"]["options"]
 
 
 def test_job_et_essais_isoles_par_compte():
@@ -321,3 +334,67 @@ def test_series_eteintes_actives_par_defaut_et_desactivables():
     sans, avec = client.get("/api/kaggle/runs", params={"competition": "defaut-eteintes"}).json()
     assert avec["config"]["options"] == {"zero_dead_days": 14}
     assert sans["config"]["options"] == {}
+
+
+# --- Poids d'ensemble appris par série (FFORMA) -------------------------------
+
+def _fenetre(n_series, rng):
+    """Fenêtre synthétique : LightGBM exact sur les séries « hautes »
+    (niveau > 0), SARIMAX exact sur les autres."""
+    rows, feats = [], {}
+    for i in range(n_series):
+        key = f"s{i}"
+        level = 1.0 if i % 2 else -1.0
+        actual = rng.uniform(5, 15, 7)
+        good, bad = actual, actual * 2
+        lgb_pred, sar_pred = (good, bad) if level > 0 else (bad, good)
+        rows += [{"_key": key, "actual": a, "lightgbm": l, "sarimax": s, "_alive": 1.0}
+                 for a, l, s in zip(actual, lgb_pred, sar_pred)]
+        feats[key] = {"level": level + rng.normal(0, 0.1)}
+    return pd.DataFrame(rows), pd.DataFrame.from_dict(feats, orient="index")
+
+
+def test_poids_appris_suivent_le_meilleur_membre_de_chaque_serie():
+    import ensemble_weights as ew
+
+    rng = np.random.default_rng(0)
+    windows = [_fenetre(80, rng) for _ in range(3)]
+    df, feats = _fenetre(80, rng)
+    w = pd.Series(ew.row_weights(windows, df, feats)).groupby(df["_key"].to_numpy()).first()
+    hautes = [f"s{i}" for i in range(80) if i % 2]
+    basses = [f"s{i}" for i in range(80) if not i % 2]
+    assert w[hautes].min() > 0.8   # surtout LightGBM
+    assert w[basses].max() < 0.2   # surtout SARIMAX
+    # à parts égales, chaque membre se trompe une fois sur deux : le global reste au milieu
+    assert ew.global_weight(windows) == pytest.approx(0.5)
+
+
+def test_poids_appris_series_eteintes_et_membre_absent():
+    import ensemble_weights as ew
+
+    spec = kc.CompetitionSpec(date_col="date", target_col="y", entity_cols=["e"], id_col="id")
+    dates = pd.date_range("2024-01-01", periods=30)
+    history = pd.DataFrame({"e": ["morte"] * 30 + ["vivante"] * 30, "date": list(dates) * 2,
+                            "y": [5.0] * 10 + [0.0] * 20 + [3.0] * 30})
+    d = pd.Timestamp("2024-01-31")
+    targets = pd.DataFrame({"e": ["morte", "vivante"], "date": [d, d]})
+    frames = {
+        "lightgbm": pd.DataFrame({"e": ["morte", "vivante"], "date": [d, d], "prevision": [2.0, 4.0]}),
+        "sarimax": pd.DataFrame({"e": ["morte"], "date": [d], "prevision": [1.0]}),
+    }
+    df = ew.align(targets, frames, history, spec, 14).set_index("e")
+    assert df.loc["vivante", "sarimax"] == 4.0  # membre absent : l'autre seul
+    out = dict(zip(df.index, ew.blend(df, 0.5)))
+    assert out == {"morte": 0.0, "vivante": 4.0}
+
+
+def test_poids_appris_repli_sur_poids_fixes_si_historique_court():
+    import api
+
+    train, test = make_competition(n_days=20, test_days=7)
+    spec = spec_store_sales()
+    train = kc.prepare_train(train, spec)
+    keys = kc.submission_keys(test, spec)
+    entities = keys[spec.entity_cols].drop_duplicates()
+    # 3e fenêtre : coupée 14 jours avant la fin, puis 7 de plus -> rien à apprendre
+    assert api._kaggle_learned_blend({}, train, train, spec, 7, 7, {}, None, entities, {}, 14) is None

@@ -30,16 +30,14 @@ import argparse
 import time
 from pathlib import Path
 
-import lightgbm as lgb
 import numpy as np
 import pandas as pd
 
 import api
+import ensemble_weights as ew
 import kaggle_competition as kc
 from benchmark_kaggle import DATASETS, cache_member_forecasts, load
 
-MEMBERS = ("lightgbm", "sarimax")
-GRID = np.round(np.linspace(0, 1, 21), 2)  # part de LightGBM
 ZERO_DEAD_DAYS = 14
 SHRINK = (0.25, 0.5, 1.0)  # part du poids propre à la série dans `serie`
 
@@ -53,122 +51,34 @@ def window_data(train, spec, keys, horizon, scored_days, exog_long, fold_end):
     targets = truth.merge(entities, on=spec.entity_cols)
     history = kc.pad_to(history, spec, history[spec.date_col].max())
     df = member_frame(targets, history, spec, horizon, exog_long, entities)
-    return df, descriptors(history, spec, df)
+    return df, ew.descriptors(history, spec, df)
 
 
 def member_frame(targets, history, spec, horizon, exog_long, entities) -> pd.DataFrame:
-    """Une ligne par ligne de `targets` (ordre conservé) : prévision de
-    chaque membre, série éteinte ou non (`_alive`) et clé de série."""
     frames = {}
-    for member in MEMBERS:
+    for member in ew.MEMBERS:
         rows = api._kaggle_forecast_rows({}, history, spec, horizon, member, {}, exog_long, entities)
-        frames[member] = kc.predictions_frame(rows, spec).rename(columns={"prevision": member})
-    on = [*spec.entity_cols, "date"]
-    df = targets.copy()
-    for col in spec.entity_cols:
-        df[col] = df[col].astype(str)
-    for member in MEMBERS:
-        df = df.merge(frames[member], on=on, how="left")
-    # un membre absent : l'autre seul (comme blend_predictions)
-    df["lightgbm"] = df["lightgbm"].fillna(df["sarimax"])
-    df["sarimax"] = df["sarimax"].fillna(df["lightgbm"])
-    # aucun des deux : repli de la page (moyenne récente), quel que soit le poids
-    empty = kc.predictions_frame([], spec)
-    fallback, _ = kc.attach_predictions(df[on], empty, history, spec, clip_zero=False)
-    for member in MEMBERS:
-        df[member] = df[member].fillna(pd.Series(fallback.to_numpy(), index=df.index))
-    dead = kc.zero_dead_series(
-        df[[*on]].assign(prevision=1.0), history, spec, ZERO_DEAD_DAYS)
-    df = df.merge(dead.rename(columns={"prevision": "_alive"}), on=on, how="left")
-    df["_alive"] = df["_alive"].fillna(1.0)
-    df["_key"] = df[spec.entity_cols].astype(str).agg("|".join, axis=1)
-    return df
-
-
-def descriptors(history, spec, df) -> pd.DataFrame:
-    """Descripteurs par série, calculés sur le seul historique connu."""
-    daily = history.groupby([*spec.entity_cols, spec.date_col], observed=True)[spec.target_col].sum().reset_index()
-    daily["_key"] = daily[spec.entity_cols].astype(str).agg("|".join, axis=1)
-    end = daily[spec.date_col].max()
-    feats = {}
-    for key, g in daily.groupby("_key", sort=False):
-        y = g.set_index(spec.date_col)[spec.target_col].sort_index()
-        nz = y[y > 0]
-        start = nz.index.min() if len(nz) else end
-        y = y[y.index >= start]
-        recent = y[y.index > end - pd.Timedelta(days=90)]
-        log = np.log1p(recent.clip(lower=0))
-        dow = log.groupby(log.index.dayofweek).transform("mean")
-        var = log.var()
-        last28, prev = y[y.index > end - pd.Timedelta(days=28)], y[(y.index <= end - pd.Timedelta(days=28))
-                                                                   & (y.index > end - pd.Timedelta(days=112))]
-        feats[key] = {
-            "length": (end - start).days,
-            "level": float(np.log1p(recent.mean())) if len(recent) else 0.0,
-            "cv": float(recent.std() / recent.mean()) if len(recent) and recent.mean() > 0 else 0.0,
-            "zeros": float((recent == 0).mean()) if len(recent) else 1.0,
-            "weekly": float(1 - ((log - dow).var() / var)) if var > 0 else 0.0,
-            "trend": float(np.log1p(last28.mean()) - np.log1p(prev.mean())) if len(prev) else 0.0,
-        }
-    out = pd.DataFrame.from_dict(feats, orient="index")
-    pred = df.groupby("_key")[["lightgbm", "sarimax"]].mean()
-    out["gap"] = np.log1p(pred["lightgbm"].clip(lower=0)) - np.log1p(pred["sarimax"].clip(lower=0))
-    return out.fillna(0.0)
-
-
-def blend(df, weight) -> np.ndarray:
-    """`weight` : scalaire ou part de LightGBM par ligne."""
-    values = weight * df["lightgbm"].to_numpy() + (1 - weight) * df["sarimax"].to_numpy()
-    return np.clip(values * df["_alive"].to_numpy(), 0, None)
-
-
-def series_sse(df) -> pd.DataFrame:
-    """Somme des carrés d'erreur log par série et par poids de la grille."""
-    log_actual = np.log1p(df["actual"].clip(lower=0).to_numpy())
-    cols = {w: (np.log1p(blend(df, w)) - log_actual) ** 2 for w in GRID}
-    return pd.DataFrame(cols).groupby(df["_key"].to_numpy()).sum()
+        frames[member] = kc.predictions_frame(rows, spec)
+    return ew.align(targets, frames, history, spec, ZERO_DEAD_DAYS)
 
 
 def rmsle(df, weight) -> float:
-    return kc.compute_metrics(df["actual"].to_numpy(), blend(df, weight))["rmsle"]
+    return kc.compute_metrics(df["actual"].to_numpy(), ew.blend(df, weight))["rmsle"]
 
 
 def evaluate(target, history_windows):
     """Score de chaque méthode sur `target`, poids appris sur `history_windows`."""
     df, feats = target
-    # séries absentes d'une fenêtre (pas encore ouvertes) : sommées sur les autres
-    sse = pd.concat([series_sse(d) for d, _ in history_windows]).groupby(level=0).sum()
-    w_global = float(sse.sum().idxmin())
+    sse = pd.concat([ew.series_sse(d) for d, _ in history_windows]).groupby(level=0).sum()
+    w_global = ew.global_weight(history_windows)
     w_series = sse.idxmin(axis=1)
     scores = {"fixe50": rmsle(df, 0.5), "global": rmsle(df, w_global)}
     for s in SHRINK:
         w = (s * w_series + (1 - s) * w_global).reindex(df["_key"]).fillna(w_global).to_numpy()
         scores[f"serie{int(s * 100)}"] = rmsle(df, w)
-
-    meta = fit_fforma(history_windows)
-    w_meta = pd.Series(np.clip(meta.predict(feats), 0, 1), index=feats.index)
-    scores["fforma"] = rmsle(df, w_meta.reindex(df["_key"]).fillna(w_global).to_numpy())
-    scores["oracle"] = float(np.sqrt(series_sse(df).min(axis=1).sum() / len(df)))
+    scores["fforma"] = rmsle(df, ew.row_weights(history_windows, df, feats))
+    scores["oracle"] = float(np.sqrt(ew.series_sse(df).min(axis=1).sum() / len(df)))
     return scores, w_global
-
-
-def fit_fforma(history_windows) -> lgb.Booster:
-    """FFORMA : une ligne par (série, fenêtre d'apprentissage) ; cible = poids
-    optimal, pondérée par ce que le choix du poids change pour la série."""
-    xs, ys, ws = [], [], []
-    for d, f in history_windows:
-        # séries ouvertes pendant la fenêtre notée : aucun historique à décrire
-        s = series_sse(d)
-        s = s.loc[s.index.intersection(f.index)]
-        xs.append(f.loc[s.index])
-        ys.append(s.idxmin(axis=1).astype(float))
-        ws.append(s.max(axis=1) - s.min(axis=1))
-    x, y, sw = pd.concat(xs), pd.concat(ys), pd.concat(ws)
-    return lgb.train(
-        {"objective": "regression", "learning_rate": 0.05, "num_leaves": 15, "min_data_in_leaf": 50,
-         "feature_fraction": 0.8, "verbose": -1, "seed": 0},
-        lgb.Dataset(x, y, weight=sw.clip(lower=1e-6)), num_boost_round=200,
-    )
 
 
 def main() -> None:
@@ -204,19 +114,17 @@ def main() -> None:
 
     if args.submit:
         past = [window(k * scored_days) for k in range(args.train_windows)]
-        sse = pd.concat([series_sse(d) for d, _ in past]).groupby(level=0).sum()
-        w_global = float(sse.sum().idxmin())
-        meta = fit_fforma(past)
+        w_global = ew.global_weight(past)
         # même enchaînement que le mode « soumission » de la page (_run_kaggle_job)
         entities = keys[spec.entity_cols].drop_duplicates()
         history = kc.pad_to(train, spec, train[spec.date_col].max())
         df = member_frame(keys[[*spec.entity_cols, "date"]], history, spec, horizon, exog_long, entities)
-        feats = descriptors(history, spec, df)
-        w_meta = pd.Series(np.clip(meta.predict(feats), 0, 1), index=feats.index)
+        feats = ew.descriptors(history, spec, df)
+        w_meta = ew.series_weights(ew.fit(past), feats)
         w = w_meta.reindex(df["_key"]).fillna(w_global).to_numpy()
         args.submit.mkdir(parents=True, exist_ok=True)
         out = args.submit / f"{args.dataset}-fforma.csv"
-        out.write_text(kc.submission_csv(keys, pd.Series(blend(df, w)), spec))
+        out.write_text(kc.submission_csv(keys, pd.Series(ew.blend(df, w)), spec))
         q = np.quantile(w_meta, [0.1, 0.5, 0.9])
         print(f"-> {out}  (global {w_global:.2f}, part LightGBM par série p10/p50/p90 "
               f"{q[0]:.2f}/{q[1]:.2f}/{q[2]:.2f})")

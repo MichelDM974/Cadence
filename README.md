@@ -25,7 +25,7 @@ Généraliste dès le départ : le moteur (décomposition + prévision) et l'imp
 - Variables exogènes mondiales, activables individuellement par l'utilisateur : jours fériés (tous pays), météo (historique réelle + normales saisonnières), vacances scolaires (France, par académie)
 - Import CSV multi-entités (jusqu'à 2 dimensions de regroupement, ex. magasin × catégorie), avec génération de prévisions en masse pour toutes les combinaisons
 - Variables exogènes personnalisées : colonnes numériques déjà présentes dans le fichier importé, ou un second fichier externe joint automatiquement (série globale ou par entité, y compris valeurs futures réelles)
-- Page Kaggle (compétitions de séries temporelles) : train + test (.csv/.zip/.gz) → correspondance de colonnes proposée → backtest local qui rejoue l'horizon réel du test (RMSLE, RMSE, MAE, SMAPE face au naïf saisonnier) → fichier de soumission, par défaut avec l'ensemble LightGBM + SARIMAX ; historique des essais par compétition, avec les scores Kaggle officiels reportés
+- Page Kaggle (compétitions de séries temporelles) : train + test (.csv/.zip/.gz) → correspondance de colonnes proposée → backtest local qui rejoue l'horizon réel du test (RMSLE, RMSE, MAE, SMAPE face au naïf saisonnier) → fichier de soumission, par défaut avec l'ensemble LightGBM + SARIMAX, dont la part de chaque modèle est apprise pour chaque série par un méta-modèle (FFORMA) ; historique des essais par compétition, avec les scores Kaggle officiels reportés
 - Persistance locale (SQLite) des points de vente/séries analysées, réutilisables sans réimport
 - Hyperparamètres des 3 modèles éditables depuis l'interface
 - Mode sombre
@@ -38,6 +38,8 @@ Prototype validé sur données réelles (Kaggle *Recruit Restaurant Visitor Fore
 
 | Configuration | Private RMSLE | Public RMSLE |
 |---|---|---|
+| Ensemble LightGBM + SARIMAX à poids appris par série (page Kaggle, défaut) | **0.55349** | – |
+| Ensemble LightGBM + SARIMAX 50/50 | 0.55433 | **0.49971** |
 | SARIMAX + jour férié | **0.57956** | **0.51544** |
 | SARIMAX seul (aucun exogène) | 0.58205 | 0.51553 |
 | SARIMAX + jour férié + météo | 0.59146 | 0.51875 |
@@ -47,7 +49,8 @@ Et sur *Store Sales - Time Series Forecasting* (54 magasins × 33 catégories, 1
 
 | Configuration | RMSLE |
 |---|---|
-| Ensemble LightGBM + SARIMAX (page Kaggle, défaut)* | **0.41075** |
+| Ensemble LightGBM + SARIMAX à poids appris par série (page Kaggle, défaut)* | **0.40371** |
+| Ensemble LightGBM + SARIMAX 50/50 | 0.41075 |
 | LightGBM seul, page Kaggle | 0.42150 |
 | LightGBM, script dédié | 0.42475 |
 | SARIMAX seul (aucun exogène) | 0.42726 |
@@ -55,7 +58,7 @@ Et sur *Store Sales - Time Series Forecasting* (54 magasins × 33 catégories, 1
 | Prophet + `onpromotion` (jointure par entité) | 0.51275 |
 | LightGBM + `onpromotion` (jointure par entité, génération en masse) | 0.55166 |
 
-\* meilleur score obtenu à ce jour, en pipeline générique : moyenne à parts égales d'un LightGBM global (profil « panel homogène » auto-détecté, tweedie 1.5) et de SARIMAX par série, séries éteintes prévues à 0, sans exogène (cf. BENCHMARKS.md). Tendance annuelle (`yoy_trend`) et régularisation sont désormais auto-détectées selon l'hétérogénéité des historiques par entité (2026-09-07, cf. BENCHMARKS.md) ; lags étendus restent opt-in (pas d'amélioration universelle constatée).
+\* meilleur score obtenu à ce jour, en pipeline générique : moyenne pondérée par série (poids prédits par un méta-modèle à arbres à partir de descripteurs de la série, à la FFORMA, appris sur trois backtests antérieurs) d'un LightGBM global (profil « panel homogène » auto-détecté, tweedie 1.5) et de SARIMAX par série, séries éteintes prévues à 0, sans exogène (cf. BENCHMARKS.md). Tendance annuelle (`yoy_trend`) et régularisation sont désormais auto-détectées selon l'hétérogénéité des historiques par entité (2026-09-07, cf. BENCHMARKS.md) ; lags étendus restent opt-in (pas d'amélioration universelle constatée).
 
 (0.501 et 0.37294 respectivement en tête des leaderboards Kaggle, pour référence.) SARIMAX bat par ailleurs une baseline naïve ("même jour la semaine dernière") sur 91% des restaurants testés (amélioration médiane +28,4% sur le MAE).
 

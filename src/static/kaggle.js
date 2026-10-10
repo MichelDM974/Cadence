@@ -8,8 +8,9 @@ const MODEL_LABELS = {
 const METRIC_LABELS = { rmsle: "RMSLE", rmse: "RMSE", mae: "MAE", smape: "SMAPE" };
 const MODEL_HINTS = {
   ensemble:
-    "Moyenne à parts égales de LightGBM et SARIMAX : la plus précise à ce jour (Store Sales, Recruit), " +
-    "mais aussi lente que SARIMAX, qu'elle ajuste en plus.",
+    "Moyenne de LightGBM et SARIMAX, la plus précise à ce jour (Store Sales, Recruit). Poids appris : " +
+    "la part de chaque modèle s'adapte à chaque série, d'après trois backtests rejoués avant la " +
+    "prévision — environ quatre fois plus long qu'en 50/50 (50/50 d'office si l'historique est trop court).",
   lightgbm:
     "Un seul modèle entraîné sur toutes les séries à la fois : le plus rapide sur des milliers de séries.",
   sarimax: "Un ajustement par série, en parallèle : compter plusieurs minutes sur des milliers de séries.",
@@ -169,6 +170,7 @@ function refreshConfigSelect() {
     ...presets.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`),
   ].join("");
   el("model-hint").textContent = MODEL_HINTS[model];
+  el("weights-field").hidden = model !== "ensemble";
 }
 
 function selectedModelParams() {
@@ -235,6 +237,7 @@ function buildRunForm(mode) {
   if (exog.length) form.append("exog_cols", exog.join(","));
   form.append("submission_target", el("submission-target").value.trim());
   form.append("zero_dead_series", el("dead-toggle").checked);
+  form.append("learned_weights", el("weights-toggle").checked);
   return form;
 }
 
@@ -379,6 +382,7 @@ function renderRuns() {
       const exog = (r.config.exog_cols || []).join(", ") || "–";
       const preset = r.config.model_params ? " (config perso)" : "";
       const dead = r.config.options && r.config.options.zero_dead_days ? " · éteintes→0" : "";
+      const weights = r.config.options && r.config.options.ensemble_weights ? " · poids appris" : "";
       const scoreInput = (field, bestRunId) =>
         `<input type="text" inputmode="decimal" class="run-input run-score${r.id === bestRunId ? " is-best" : ""}" ` +
         `data-id="${r.id}" data-field="${field}" value="${r[field] ?? ""}" placeholder="–" />`;
@@ -387,7 +391,7 @@ function renderRuns() {
         `<td>${r.id}</td>` +
         `<td>${formatDateTime(r.created_at)}</td>` +
         `<td><span class="run-mode run-mode--${r.mode}">${r.mode === "backtest" ? "Backtest" : "Soumission"}</span></td>` +
-        `<td>${MODEL_LABELS[r.model] || escapeHtml(r.model)}${preset}${dead}</td>` +
+        `<td>${MODEL_LABELS[r.model] || escapeHtml(r.model)}${preset}${weights}${dead}</td>` +
         `<td>${escapeHtml(exog)}</td>` +
         `<td class="${r.id === bestLocal ? "is-best" : ""}">${formatScore(localOf(r))}</td>` +
         `<td>${gain === null ? "–" : `${gain >= 0 ? "−" : "+"}${Math.abs(gain).toFixed(1)} %`}</td>` +

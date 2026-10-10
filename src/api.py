@@ -25,6 +25,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from statsmodels.tsa.seasonal import STL
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 
+import ensemble_weights
 import exogenous
 import kaggle_competition as kc
 import lightgbm_forecast
@@ -1748,6 +1749,12 @@ KAGGLE_MODES = {"backtest", "submission"}
 # 0.42150 officiel) et sur Recruit (0.55433 contre 0.57956 officiel), où
 # SARIMAX seul est pourtant moins bon que LightGBM (cf. BENCHMARKS.md).
 KAGGLE_ENSEMBLE = [["lightgbm", 0.5], ["sarimax", 0.5]]
+# Poids de l'ensemble appris par série (méta-modèle FFORMA, cf.
+# ensemble_weights), défaut depuis le 10/10/2026 : bat le 50/50 au score
+# officiel sur Store Sales (0.40371 contre 0.41075) et Recruit (0.55349
+# contre 0.55433). Coûte 3 backtests de plus ; 50/50 si l'historique ne
+# permet pas les 3 fenêtres d'apprentissage.
+KAGGLE_ENSEMBLE_WEIGHTS = "fforma"
 # Séries sans aucune vente sur ce nombre de jours : prévues à 0. Active par
 # défaut (05/10/2026) : Store Sales 0.476 -> 0.461 (fenêtres récentes) et
 # 0.543 -> 0.528 (même période un an plus tôt), strictement neutre sur
@@ -1822,11 +1829,14 @@ def _kaggle_forecast_rows(
 def kaggle_predict(
     job: dict, history: pd.DataFrame, spec: kc.CompetitionSpec, horizon: int, model: str,
     model_params: dict, exog_long: pd.DataFrame | None, entities: pd.DataFrame, options: dict | None = None,
+    scored_days: int | None = None, raw_history: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Prévisions (entité(s), date, prevision) d'un essai Kaggle : un modèle,
     ou la moyenne pondérée de plusieurs (`options["ensemble"]` : liste de
-    [modèle, poids]), puis les post-traitements génériques activés dans
-    `options` (cf. kaggle_competition)."""
+    [modèle, poids], poids appris par série si `options["ensemble_weights"]`),
+    puis les post-traitements génériques activés dans `options` (cf.
+    kaggle_competition). `raw_history` : `history` avant pad_to, pour
+    les fenêtres d'apprentissage des poids (sinon `history`)."""
     options = options or {}
     members = options.get("ensemble") or [[model, 1.0]]
     frames = []
@@ -1836,6 +1846,14 @@ def kaggle_predict(
         job["step"] = f"{MODEL_LABELS_FR.get(member, member)} ({i + 1}/{len(members)})" if len(members) > 1 else None
         rows = _kaggle_forecast_rows(job, history, spec, horizon, member, model_params, exog_long, entities)
         frames.append((kc.predictions_frame(rows, spec), float(weight)))
+    if options.get("ensemble_weights") == "fforma" and tuple(m for m, _ in members) == ensemble_weights.MEMBERS:
+        learned = _kaggle_learned_blend(
+            job, history, raw_history if raw_history is not None else history, spec, horizon,
+            scored_days or horizon, model_params, exog_long, entities,
+            dict(zip(ensemble_weights.MEMBERS, (f for f, _ in frames))), options.get("zero_dead_days"),
+        )
+        if learned is not None:
+            return learned
     preds = kc.blend_predictions(frames, spec)
     if options.get("zero_dead_days"):
         preds = kc.zero_dead_series(preds, history, spec, int(options["zero_dead_days"]))
@@ -1843,6 +1861,48 @@ def kaggle_predict(
 
 
 MODEL_LABELS_FR = {"lightgbm": "LightGBM", "sarimax": "SARIMAX", "prophet": "Prophet"}
+
+
+def _kaggle_learned_blend(
+    job: dict, history: pd.DataFrame, raw_history: pd.DataFrame, spec: kc.CompetitionSpec, horizon: int,
+    scored_days: int,
+    model_params: dict, exog_long: pd.DataFrame | None, entities: pd.DataFrame, frames: dict,
+    zero_dead_days: int | None,
+) -> pd.DataFrame | None:
+    """Ensemble LightGBM + SARIMAX à poids appris par série : rejoue la
+    configuration du test sur les fenêtres les plus récentes de
+    `raw_history` (le méta-modèle n'apprend que du passé de ce qu'il
+    pondère), puis pondère `frames`, prévues sur `history`. Fenêtres prises
+    avant pad_to : ses zéros de fin compteraient sinon comme des ventes
+    nulles observées. None si l'historique ne permet pas toutes les
+    fenêtres : l'appelant garde alors les poids fixes."""
+    n = ensemble_weights.LEARNING_WINDOWS
+    end = raw_history[spec.date_col].max()
+    windows = []
+    for k in range(n):
+        try:
+            past, truth = kc.backtest_split(
+                raw_history[raw_history[spec.date_col] <= end - pd.Timedelta(days=k * scored_days)],
+                spec, horizon, scored_days)
+        except ValueError:
+            return None
+        targets = truth.merge(entities, on=spec.entity_cols)
+        if targets.empty:
+            return None
+        past = kc.pad_to(past, spec, past[spec.date_col].max())
+        window_frames = {}
+        for i, member in enumerate(ensemble_weights.MEMBERS):
+            job["step"] = f"Poids appris, fenêtre {k + 1}/{n} : {MODEL_LABELS_FR[member]} ({i + 1}/2)"
+            rows = _kaggle_forecast_rows(job, past, spec, horizon, member, model_params, exog_long, entities)
+            window_frames[member] = kc.predictions_frame(rows, spec)
+        df = ensemble_weights.align(targets, window_frames, past, spec, zero_dead_days)
+        windows.append((df, ensemble_weights.descriptors(past, spec, df)))
+
+    on = [*spec.entity_cols, "date"]
+    rows = pd.concat([f[on] for f in frames.values()]).drop_duplicates().reset_index(drop=True)
+    df = ensemble_weights.align(rows, frames, history, spec, zero_dead_days)
+    weights = ensemble_weights.row_weights(windows, df, ensemble_weights.descriptors(history, spec, df))
+    return df[on].assign(prevision=ensemble_weights.blend(df, weights))
 
 
 def kaggle_backtest(
@@ -1861,8 +1921,10 @@ def kaggle_backtest(
     targets = truth.merge(entities, on=spec.entity_cols)
     if targets.empty:
         raise HTTPException(400, "Aucune entité du test n'a d'historique sur la fenêtre de backtest")
-    history = kc.pad_to(history, spec, history[spec.date_col].max())
-    preds = kaggle_predict(job, history, spec, horizon, model, model_params, exog_long, entities, options)
+    padded = kc.pad_to(history, spec, history[spec.date_col].max())
+    preds = kaggle_predict(
+        job, padded, spec, horizon, model, model_params, exog_long, entities, options, scored_days, history)
+    history = padded
     clip_zero = bool(train[spec.target_col].min() >= 0)
     values, n_fallback = kc.attach_predictions(targets, preds, history, spec, clip_zero)
     actual = targets["actual"].to_numpy()
@@ -1901,7 +1963,8 @@ def _run_kaggle_job(
         else:
             entities = keys[spec.entity_cols].drop_duplicates()
             history = kc.pad_to(train, spec, train[spec.date_col].max())
-            preds = kaggle_predict(job, history, spec, horizon, model, model_params, exog_long, entities, options)
+            preds = kaggle_predict(
+                job, history, spec, horizon, model, model_params, exog_long, entities, options, scored_days, train)
             clip_zero = bool(train[spec.target_col].min() >= 0)
             values, n_fallback = kc.attach_predictions(keys, preds, history, spec, clip_zero)
             job["csv"] = kc.submission_csv(keys, values, spec)
@@ -1940,6 +2003,7 @@ async def api_kaggle_start(
     exog_cols: str | None = Form(None),
     submission_target: str | None = Form(None),
     zero_dead_series: bool = Form(True),
+    learned_weights: bool = Form(True),
     user: dict = Depends(current_user),
 ):
     """Démarre en tâche de fond un backtest local (`mode=backtest`) ou la
@@ -1964,6 +2028,8 @@ async def api_kaggle_start(
     options = {"zero_dead_days": KAGGLE_ZERO_DEAD_DAYS} if zero_dead_series else {}
     if model == "ensemble":
         options["ensemble"] = KAGGLE_ENSEMBLE
+        if learned_weights:
+            options["ensemble_weights"] = KAGGLE_ENSEMBLE_WEIGHTS
 
     train_raw = await read_kaggle_table(train_file)
     test_raw = await read_kaggle_table(test_file)
