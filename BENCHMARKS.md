@@ -28,7 +28,8 @@ Deux types de scores, à ne pas confondre :
 
 | Configuration | Private RMSLE | Public RMSLE |
 |---|---|---|
-| **Banc : ensemble 50/50 LightGBM + SARIMAX, séries éteintes à 0 (06/10/2026)** | **0.55433** | **0.49971** |
+| **Banc : ensemble LightGBM + SARIMAX à poids FFORMA par série, séries éteintes à 0 (10/10/2026)** | **0.55349** | ? |
+| Banc : ensemble 50/50 LightGBM + SARIMAX, séries éteintes à 0 (06/10/2026) | 0.55433 | **0.49971** |
 | Banc : idem, 70 % LightGBM (06/10/2026) | 0.55560 | 0.50115 |
 | SARIMAX + jour férié | 0.57956 | 0.51544 |
 | SARIMAX seul (aucun exogène) | 0.58205 | 0.51553 |
@@ -41,7 +42,8 @@ Tête du leaderboard public, pour référence : 0.501.
 
 | Configuration | RMSLE |
 |---|---|
-| **Banc : ensemble 50/50 LightGBM « gros » tweedie 1.5 + SARIMAX, séries éteintes à 0, sans exogène (06/10/2026)** | **0.41075** |
+| **Banc : ensemble LightGBM « gros » tweedie 1.5 + SARIMAX à poids FFORMA par série, séries éteintes à 0, sans exogène (10/10/2026)** | **0.40371** |
+| Banc : idem à parts égales 50/50 (06/10/2026) | 0.41075 |
 | Banc : idem, tweedie 1.3 (06/10/2026) | 0.41209 |
 | Banc : idem, tweedie 1.1 (ensemble seul, 06/10/2026) | 0.41441 |
 | Page Kaggle : LightGBM « gros » (255 feuilles, 0.03, 1200 it.) + séries éteintes à 0 (05/10/2026) | 0.42150 |
@@ -171,6 +173,12 @@ et toutes les méthodes apprises s'effondrent. Sur les fenêtres récentes
 (3 fenêtres d'apprentissage), FFORMA est neutre (0.58878 vs 0.58907),
 gagnant une fois sur trois. Coût : 3 backtests de plus par soumission
 (Store Sales ≈ 25 min chacun, SARIMAX dominant).
+
+Score officiel (10/10/2026, `--submit`, méta-modèle appris sur les 3
+fenêtres les plus récentes) : FFORMA bat le 50/50 sur **les deux** jeux —
+Store Sales 0.40371 (vs 0.41075, gain conforme au banc), Recruit 0.55349
+privé (vs 0.55433). Part de LightGBM par série p10/p50/p90 : Store Sales
+0.24/0.79/0.91, Recruit 0.29/0.48/0.74.
 
 ### Store Sales — exogène future lue dans test.csv (05/10/2026, page Kaggle)
 
