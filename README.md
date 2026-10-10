@@ -38,8 +38,8 @@ Prototype validé sur données réelles (Kaggle *Recruit Restaurant Visitor Fore
 
 | Configuration | Private RMSLE | Public RMSLE |
 |---|---|---|
-| Ensemble LightGBM + SARIMAX à poids appris par série (page Kaggle, défaut) | **0.55349** | – |
-| Ensemble LightGBM + SARIMAX 50/50 | 0.55433 | **0.49971** |
+| Ensemble LightGBM + SARIMAX à poids appris par série (page Kaggle, défaut) | **0.55349** | **0.49911** |
+| Ensemble LightGBM + SARIMAX 50/50 | 0.55433 | 0.49971 |
 | SARIMAX + jour férié | **0.57956** | **0.51544** |
 | SARIMAX seul (aucun exogène) | 0.58205 | 0.51553 |
 | SARIMAX + jour férié + météo | 0.59146 | 0.51875 |
