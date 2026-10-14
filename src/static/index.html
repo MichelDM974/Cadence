@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Cadence</title>
   <link rel="stylesheet" href="style.css" />
+  <link rel="preload" href="vendor/inter/InterVariable.woff2" as="font" type="font/woff2" crossorigin />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
 </head>
 <body>
@@ -86,7 +87,7 @@
           <label>Variables exogènes</label>
           <div id="exog-active" class="exog-tags"></div>
 
-          <button id="exog-add-open-btn" type="button">+ Ajouter une variable exogène</button>
+          <button id="exog-add-open-btn" type="button" class="btn-outline">+ Ajouter une variable exogène</button>
 
           <div id="exog-add-flow" hidden>
             <div id="exog-type-choice" class="exog-choice-row">
@@ -133,7 +134,7 @@
                     <select id="exog-category-col"><option value="">— Aucune —</option></select>
                   </div>
                 </div>
-                <button id="exog-file-confirm-btn" type="button">Ajouter</button>
+                <button id="exog-file-confirm-btn" type="button" class="btn-outline">Ajouter</button>
                 <p id="exog-file-status" class="status"></p>
               </div>
             </div>
@@ -159,7 +160,7 @@
             </select>
             <select id="bulk-model-config"></select>
             <label><input type="checkbox" id="bulk-ci-toggle" checked /> Inclure l'intervalle de confiance</label>
-            <button id="bulk-forecast-btn" type="button">Générer le CSV pour toutes les entités</button>
+            <button id="bulk-forecast-btn" type="button" class="btn-outline">Générer le CSV pour toutes les entités</button>
             <span id="bulk-row-count" class="hint"></span>
           </div>
           <p class="hint">SARIMAX/Prophet : un modèle ajusté par entité, peut prendre plusieurs minutes sur un gros fichier. LightGBM : un seul modèle entraîné sur toutes les entités à la fois (mutualise le signal entre entités) — sans intervalle de confiance pour l'instant.</p>
@@ -171,7 +172,7 @@
         <div id="save-point-row" hidden>
           <label for="point-name-input">Nom du point de vente</label>
           <input type="text" id="point-name-input" placeholder="ex. Bistrot du Port" />
-          <button id="save-point-btn" type="button">Enregistrer ce point de vente</button>
+          <button id="save-point-btn" type="button" class="btn-outline">Enregistrer ce point de vente</button>
           <p id="save-point-status" class="status"></p>
         </div>
       </div>
@@ -237,7 +238,7 @@
         <label for="horizon-input">Horizon (jours)</label>
         <input type="number" id="horizon-input" value="28" min="7" max="90" />
         <button id="backtest-btn">Relancer la comparaison</button>
-        <button id="autotune-btn" type="button">Optimiser les paramètres</button>
+        <button id="autotune-btn" type="button" class="btn-outline">Optimiser les paramètres</button>
       </div>
       <div class="forecast-controls">
         <label for="backtest-sarimax-config" class="config-row-label">Config SARIMAX</label>
@@ -281,7 +282,7 @@
           <option value="prophet">Prophet</option>
         </select>
         <button id="forecast-btn">Générer la prévision</button>
-        <button id="download-btn" hidden>Télécharger (CSV)</button>
+        <button id="download-btn" class="btn-outline" hidden>Télécharger (CSV)</button>
         <label id="download-ci-label">
           <input type="checkbox" id="download-ci-toggle" checked /> Inclure l'intervalle de confiance
         </label>
@@ -292,6 +293,7 @@
   </main>
 
   <script src="auth-guard.js"></script>
+  <script src="common.js"></script>
   <script src="model-params.js"></script>
   <script src="menu.js"></script>
   <script src="app.js"></script>

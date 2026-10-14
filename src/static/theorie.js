@@ -66,7 +66,7 @@ function renderArimaCharts() {
     type: "line",
     data: {
       labels,
-      datasets: [{ data: diff, borderColor: cssVar("--accent-2"), backgroundColor: "transparent", tension: 0.3, pointRadius: 0 }],
+      datasets: [{ data: diff, borderColor: cssVar("--series-1"), backgroundColor: "transparent", tension: 0.3, pointRadius: 0 }],
     },
     options: chartAxisOptions(),
   });
@@ -86,7 +86,7 @@ function renderSarimaChart() {
     type: "line",
     data: {
       labels,
-      datasets: [{ data, borderColor: cssVar("--accent-3"), backgroundColor: "transparent", tension: 0.3, pointRadius: 2 }],
+      datasets: [{ data, borderColor: cssVar("--series-7"), backgroundColor: "transparent", tension: 0.3, pointRadius: 2 }],
     },
     options: chartAxisOptions(),
   });

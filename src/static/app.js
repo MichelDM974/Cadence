@@ -878,7 +878,7 @@ function renderAnalysis(data) {
   el("period-label").textContent = `${formatDateFR(data.dates[0])} → ${formatDateFR(data.dates[data.dates.length - 1])} (${data.dates.length} jours)`;
 
   const accent = cssVar("--accent");
-  const accent2 = cssVar("--accent-2");
+  const accent2 = cssVar("--series-1");
   renderLineChart("observed-chart", data.dates, [simpleDataset("Observé", data.observed, accent)]);
   renderLineChart("trend-chart", data.dates, [simpleDataset("Tendance", data.trend, accent)]);
   renderLineChart("seasonal-chart", data.dates, [simpleDataset("Saisonnier", data.seasonal, accent)]);
@@ -975,7 +975,7 @@ function renderBacktest(data) {
     })
     .join("");
 
-  const colors = { naive: cssVar("--accent-2"), sarimax: cssVar("--accent"), prophet: cssVar("--accent-3") };
+  const colors = { naive: cssVar("--series-1"), sarimax: cssVar("--accent"), prophet: cssVar("--series-7") };
   const datasets = [simpleDataset("Réel", data.actual, cssVar("--text"))];
   for (const [name, values] of Object.entries(data.predictions)) {
     datasets.push(simpleDataset(MODEL_LABELS[name] || name, values, colors[name] || cssVar("--muted")));
