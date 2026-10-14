@@ -1,5 +1,5 @@
 """CLI pour créer un compte Cadence. Pas de signup public (MVP B2B, décision
-du 07/09/2026, cf. journal-de-bord) : c'est l'opérateur qui crée les comptes
+du 07/09/2026, cf. centre-de-controle) : c'est l'opérateur qui crée les comptes
 de ses restaurateurs avec ce script. Le tout premier compte se crée plutôt
 via l'écran /setup de l'app (il récupère aussi les points de vente créés
 avant l'introduction des comptes).

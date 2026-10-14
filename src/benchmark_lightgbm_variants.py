@@ -1,7 +1,7 @@
 """Compare, sur deux jeux de données Kaggle réels (*Store Sales* : historique
 long/homogène ; *Recruit* : historique court/hétérogène par restaurant), le
 LightGBM lean actuel de l'app (`lightgbm_forecast.py`) contre les 3 pistes
-candidates identifiées dans le journal-de-bord (lags fins, lag annuel/
+candidates identifiées dans le cdc (lags fins, lag annuel/
 yoy_trend, régularisation réduite) — en appelant directement
 `run_bulk_lightgbm_forecast`, le vrai point d'entrée de production, pas une
 réimplémentation séparée.

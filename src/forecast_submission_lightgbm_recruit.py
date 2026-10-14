@@ -1,13 +1,13 @@
 """Soumission Kaggle *Recruit Restaurant Visitor Forecasting* avec le
 LightGBM de l'app (`lightgbm_forecast.py`), config "lag annuel + yoy_trend"
 — la seule des 3 pistes candidates (cf. benchmark_lightgbm_variants.py,
-journal-de-bord) qui améliore ce dataset (historique court/hétérogène par
+centre-de-controle) qui améliore ce dataset (historique court/hétérogène par
 restaurant, médiane 247j) : RMSLE local 0.72323 vs 0.73057 en lean.
 
 Contrairement à forecast_submission_lightgbm_store_sales.py (réimplémentation
 bespoke), ce script appelle directement `run_bulk_lightgbm_forecast`, le
 point d'entrée réel de l'app — la config `feature_config` ci-dessous n'est
-donc PAS le défaut de l'app (qui reste lean, cf. journal-de-bord : aucune
+donc PAS le défaut de l'app (qui reste lean, cf. centre-de-controle : aucune
 piste ne gagne sur les deux benchmarks à la fois), seulement celle utilisée
 pour cette soumission ponctuelle.
 

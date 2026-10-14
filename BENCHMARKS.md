@@ -3,7 +3,7 @@
 Historique des scores mesurés sur deux jeux de données Kaggle réels, utilisés
 comme bancs d'essai pour comparer les modèles et les axes de précision entre
 eux (cf. `src/forecast_submission_*.py`, `src/benchmark_lightgbm_variants.py`).
-Décisions actées à partir de ces chiffres → `journal-de-bord/cadence.md`.
+Décisions actées à partir de ces chiffres → `centre-de-controle/journaux/cadence.md`.
 
 - **Recruit Restaurant Visitor Forecasting** — 800+ restaurants, un modèle
   par restaurant, historique **court et hétérogène** (20 à 478 jours selon
@@ -218,7 +218,7 @@ réel de production — pas une réimplémentation séparée.
 | lags fins + yoy (combiné) | 0.72426 |
 | lean, ancien défaut (yoy_trend forcé désactivé) | 0.73057 |
 
-`yoy_trend` auto-détecté (07/09/2026, cf. journal-de-bord) reproduit
+`yoy_trend` auto-détecté (07/09/2026, cf. centre-de-controle) reproduit
 exactement le score de la config explicite équivalente — confirme que la
 détection automatique (coefficient de variation des longueurs d'historique
 par entité) s'active correctement sur ce dataset hétérogène (cv=0.31),
@@ -227,7 +227,7 @@ meilleure ici en isolation, mais n'est pas auto-activée sur ce dataset
 hétérogène (cv=0.31 > seuil) : gardée opt-in faute de preuve isolée sur
 historique hétérogène (le seul test connu la combinait à d'autres axes,
 cf. ci-dessous) — cf. règle "améliore tous les cas connus ou reste
-optionnelle" (`journal-de-bord/cadence.md`, Décisions actées).
+optionnelle" (`centre-de-controle/journaux/cadence.md`, Décisions actées).
 
 ### Store Sales — régularisation réduite isolée (07/09/2026, `benchmark_lightgbm_variants.py`)
 

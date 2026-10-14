@@ -60,7 +60,7 @@ LGB_PARAMS = {
 }
 NUM_BOOST_ROUND = 2000
 EARLY_STOPPING_ROUNDS = 100
-# figé après tuning par --validate (cf. journal-de-bord/cadence.md) : nombre
+# figé après tuning par --validate (cf. centre-de-controle/journaux/cadence.md) : nombre
 # d'itérations retenu pour l'entraînement final sans validation interne.
 FINAL_NUM_BOOST_ROUND = 1200
 
