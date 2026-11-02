@@ -36,7 +36,7 @@
   <main>
     <div class="page-intro">
       <h2>Comment fonctionnent les modèles</h2>
-      <p class="hint">De ARIMA à SARIMAX, étape par étape.</p>
+      <p class="hint">De ARIMA à SARIMAX étape par étape, puis Prophet et LightGBM.</p>
     </div>
     <section class="panel model-params-page">
       <p class="hint">
@@ -44,7 +44,8 @@
         trois étapes : ARIMA pose le socle (tendance + mémoire courte), SARIMA y ajoute la saisonnalité,
         SARIMAX y ajoute enfin les variables externes (météo, jours fériés...). Chaque bloc reprend le
         précédent et lui ajoute une seule idée nouvelle — les graphiques ci-dessous sont des exemples
-        illustratifs (données synthétiques), pas des prévisions réelles.
+        illustratifs (données synthétiques), pas des prévisions réelles. Prophet et LightGBM, les deux
+        autres modèles de Cadence, suivent : ils partent d'autres idées, expliquées de la même façon.
       </p>
 
       <div class="model-params-block">
@@ -202,11 +203,154 @@
         prévision du précédent, sans le remplacer.
       </p>
 
-      <p class="hint">
-        Prophet et LightGBM reposent sur des logiques différentes (décomposition de tendance/saisonnalité
-        pour Prophet, apprentissage par arbres de décision pour LightGBM) — leur explication viendra dans un
-        prochain ajout à cette page.
-      </p>
+      <div class="model-params-block">
+        <h3>4. Prophet — additionner des courbes lisibles</h3>
+        <div class="model-formula">
+          <p class="model-formula-intro">
+            Prophet (bibliothèque de Meta) ne regarde pas les jours précédents comme ARIMA : il décrit la
+            série comme une somme de courbes du temps, chacune avec un sens concret — une tendance, des
+            cycles, des jours particuliers — et ajuste leur forme sur tout l'historique. Prévoir, c'est
+            prolonger ces courbes dans le futur.
+          </p>
+
+          <div class="model-formula-step">
+            <p class="model-formula-step-label">Décomposition — l'idée de départ</p>
+            <p class="model-formula-eq" data-latex="y(t) = g(t) + s(t) + h(t) + \varepsilon_t">y(t) = g(t) + s(t) + h(t) + ε<sub>t</sub></p>
+            <p class="model-formula-step-desc">
+              g(t) est la tendance (le niveau général), s(t) les saisonnalités (le motif qui se répète),
+              h(t) l'effet des jours particuliers (fériés, promotions...) et ε<sub>t</sub> le bruit que
+              rien n'explique. Chaque terme est détaillé ci-dessous.
+            </p>
+          </div>
+          <div class="model-formula-step">
+            <p class="model-formula-step-label">Tendance — une ligne qui peut changer de pente</p>
+            <p class="model-formula-eq" data-latex="\begin{gathered} g(t) = \Big(k + \sum_{s_j &lt; t} \delta_j\Big)\, t \\ + \Big(m + \sum_{s_j &lt; t} \gamma_j\Big) \end{gathered}">g(t) = (k + Σ<sub>s<sub>j</sub>&lt;t</sub> δ<sub>j</sub>) · t + (m + Σ<sub>s<sub>j</sub>&lt;t</sub> γ<sub>j</sub>)</p>
+            <p class="model-formula-step-desc">
+              Une droite de pente k et d'ordonnée m, qui peut changer de pente (de δ<sub>j</sub>) à des
+              dates de rupture s<sub>j</sub> réparties sur l'historique — les γ<sub>j</sub> recollent
+              les morceaux pour que la ligne reste continue. Plus les δ<sub>j</sub> sont permis grands,
+              plus la tendance suit les virages de la série : c'est la « flexibilité de tendance » de la
+              <a href="models.html">page Modèles</a> (0,05 par défaut) — trop haute, elle colle au bruit.
+            </p>
+          </div>
+          <div class="model-formula-step">
+            <p class="model-formula-step-label">Saisonnalités — des sinusoïdes (séries de Fourier)</p>
+            <p class="model-formula-eq" data-latex="s(t) = \sum_{n=1}^{N} \Big(a_n \cos\frac{2\pi n t}{P} + b_n \sin\frac{2\pi n t}{P}\Big)">s(t) = Σ<sub>n=1..N</sub> (a<sub>n</sub> cos(2πnt/P) + b<sub>n</sub> sin(2πnt/P))</p>
+            <p class="model-formula-step-desc">
+              Un motif de période P (P = 7 jours pour la semaine, P = 365,25 pour l'année) s'écrit comme
+              une somme de N vagues de plus en plus rapides, dont Prophet apprend les amplitudes
+              a<sub>n</sub>, b<sub>n</sub>. Peu de vagues donnent un motif doux, beaucoup un motif
+              anguleux (un samedi très différent du vendredi). Prophet ajoute de lui-même la saisonnalité
+              hebdomadaire dès deux semaines de données (N = 3) et l'annuelle dès deux ans (N = 10). La
+              « force de la saisonnalité » (10 par défaut) borne ces amplitudes.
+            </p>
+          </div>
+          <div class="model-formula-step">
+            <p class="model-formula-step-label">Jours particuliers — fériés et autres variables</p>
+            <p class="model-formula-eq" data-latex="h(t) = \sum_{k} \beta_k \, X_{k,t}">h(t) = Σ<sub>k</sub> β<sub>k</sub> · X<sub>k,t</sub></p>
+            <p class="model-formula-step-desc">
+              Prophet sait gérer une liste de jours fériés à part ; Cadence lui passe plutôt les mêmes
+              variables que SARIMAX — jour férié, vacances, météo, colonnes externes —, chacune comme un
+              régresseur X<sub>k,t</sub> avec son coefficient β<sub>k</sub>. Même vigilance : leurs valeurs
+              futures doivent être connues.
+            </p>
+          </div>
+          <div class="model-formula-step">
+            <p class="model-formula-step-label">Mode multiplicatif — celui de Cadence par défaut</p>
+            <p class="model-formula-eq" data-latex="y(t) = g(t) \cdot \big(1 + s(t) + h(t)\big) + \varepsilon_t">y(t) = g(t) · (1 + s(t) + h(t)) + ε<sub>t</sub></p>
+            <p class="model-formula-step-desc">
+              La bibliothèque additionne par défaut ; Cadence multiplie : saisonnalité et jours
+              particuliers deviennent des pourcentages de la tendance. Un samedi « +30 % » reste +30 %
+              quand l'activité double, alors qu'en additif il resterait « +15 couverts » — plus juste pour
+              un commerce dont le pic du week-end grandit avec la fréquentation. Le bouton « Optimiser les
+              paramètres » essaie aussi le mode additif et garde le plus précis.
+            </p>
+          </div>
+
+          <p class="model-formula-summary">
+            Chaque terme se lit séparément — d'où l'intérêt de Prophet pour comprendre une activité : la
+            tendance dit où va le niveau, la saisonnalité quel jour compte, les régresseurs ce que valent un
+            férié ou une promotion. Cadence ajuste un Prophet par série et rend un intervalle de confiance
+            autour de la prévision (80 % par défaut, réglable) ; il est comparé à SARIMAX et à l'estimation naïve
+            à l'étape 4 de la page Prévision.
+          </p>
+        </div>
+      </div>
+
+      <div class="model-params-block">
+        <h3>5. LightGBM — apprendre de toutes les séries à la fois</h3>
+        <div class="model-formula">
+          <p class="model-formula-intro">
+            Changement de point de vue : plus d'équation du temps, mais un apprentissage automatique. On
+            transforme la prévision en question « étant donné ce qu'on sait de cette série jusqu'à hier,
+            combien demain ? », posée des milliers de fois sur l'historique, et LightGBM apprend à y
+            répondre avec des arbres de décision. Cadence s'en sert pour les fichiers à plusieurs séries
+            (génération en masse, page Kaggle).
+          </p>
+
+          <div class="model-formula-step">
+            <p class="model-formula-step-label">Ce que le modèle voit — retards, moyennes glissantes, calendrier</p>
+            <p class="model-formula-eq" data-latex="\begin{gathered} x_{i,t} = \big(\tilde y_{i,t-1},\ \tilde y_{i,t-7},\ \tilde y_{i,t-14},\ \tilde y_{i,t-28}, \\ \bar y^{(7)}_{i,t},\ \bar y^{(28)}_{i,t},\ \text{calendrier},\ i,\ X_{i,t}\big) \end{gathered}">x<sub>i,t</sub> = (ỹ<sub>i,t−1</sub>, ỹ<sub>i,t−7</sub>, ỹ<sub>i,t−14</sub>, ỹ<sub>i,t−28</sub>, ȳ<sup>(7)</sup>, ȳ<sup>(28)</sup>, jour, mois, i, X<sub>i,t</sub>)</p>
+            <p class="model-formula-step-desc">
+              Pour la série i (un magasin × une famille de produits, par exemple) au jour t : ses valeurs
+              d'hier, d'il y a une, deux et quatre semaines (ỹ = log(1 + y), pour que gros et petits
+              volumes se comparent), ses moyennes des 7 et 28 derniers jours, le calendrier (jour de la
+              semaine, du mois, mois, week-end), un code qui dit de quelle série il s'agit, et les
+              exogènes X<sub>i,t</sub>. Les retards jouent le rôle de la partie AR d'ARIMA, le calendrier
+              celui de la saisonnalité — mais rien n'impose leur forme : les arbres la trouvent.
+            </p>
+          </div>
+          <div class="model-formula-step">
+            <p class="model-formula-step-label">Boosting de gradient — chaque arbre corrige les précédents</p>
+            <p class="model-formula-eq" data-latex="\begin{gathered} F_M(x) = \sum_{m=1}^{M} \eta \, f_m(x) \\ f_m \approx -\frac{\partial L\big(y, F_{m-1}(x)\big)}{\partial F_{m-1}(x)} \end{gathered}">F<sub>M</sub>(x) = Σ<sub>m=1..M</sub> η · f<sub>m</sub>(x), f<sub>m</sub> ≈ −∂L(y, F<sub>m−1</sub>(x)) / ∂F<sub>m−1</sub>(x)</p>
+            <p class="model-formula-step-desc">
+              Un arbre f<sub>m</sub> découpe les exemples par questions simples (« samedi ? », « moyenne
+              des 7 jours au-dessus de 40 ? ») et donne une valeur à chaque feuille. Le premier arbre
+              prévoit grossièrement ; le suivant est entraîné sur ce qui reste à corriger (le gradient de
+              l'erreur L), et ainsi de suite. η, le taux d'apprentissage, ne garde qu'une petite part de
+              chaque correction pour avancer prudemment. Réglages de Cadence par défaut : M = 300 arbres,
+              η = 0,05, 63 feuilles par arbre et au moins 50 exemples par feuille (contre le
+              surapprentissage) — modifiables dans la <a href="models.html">page Modèles</a>.
+            </p>
+          </div>
+          <div class="model-formula-step">
+            <p class="model-formula-step-label">Objectif Tweedie — des ventes souvent nulles, parfois énormes</p>
+            <p class="model-formula-eq" data-latex="\begin{gathered} \hat y = e^{F(x)}, \qquad 1 &lt; \rho &lt; 2 \\ L(y, \hat y) = -\frac{y\,\hat y^{\,1-\rho}}{1-\rho} + \frac{\hat y^{\,2-\rho}}{2-\rho} \end{gathered}">ŷ = e<sup>F(x)</sup>, L(y, ŷ) = −y·ŷ<sup>1−ρ</sup>/(1−ρ) + ŷ<sup>2−ρ</sup>/(2−ρ), 1 &lt; ρ &lt; 2</p>
+            <p class="model-formula-step-desc">
+              L'erreur L que les arbres corrigent n'est pas l'écart au carré : beaucoup de séries de vente
+              ont des jours à zéro et quelques pics, et l'écart au carré pousse à sous-prévoir. La perte
+              de Tweedie (celle de la gagnante de la compétition M5) est faite pour ce mélange ; ρ règle
+              la place donnée aux zéros — 1,1 par défaut dans Cadence, 1,5 quand toutes les séries ont un
+              historique de même longueur (voir plus bas). Le modèle prévoit directement en valeurs réelles, jamais
+              négatives.
+            </p>
+          </div>
+          <div class="model-formula-step">
+            <p class="model-formula-step-label">Un modèle global, une prévision pas à pas</p>
+            <p class="model-formula-eq" data-latex="\begin{gathered} \hat y_{i,T+h} = F\big(x_{i,T+h}\big) \\ x_{i,T+h} \text{ reprend } \hat y_{i,T+h-1},\ \hat y_{i,T+h-7},\ \dots \end{gathered}">ŷ<sub>i,T+h</sub> = F(x<sub>i,T+h</sub>), où x<sub>i,T+h</sub> reprend ŷ<sub>i,T+h−1</sub>, ŷ<sub>i,T+h−7</sub>...</p>
+            <p class="model-formula-step-desc">
+              Là où SARIMAX et Prophet ajustent un modèle par série, LightGBM en entraîne un seul pour
+              toutes : une série courte profite de ce que les autres ont appris (l'effet du samedi, d'une
+              promotion), et le code de série garde ce qui lui est propre. Pour l'horizon, la prévision
+              avance d'un jour à la fois : celle de demain devient le « hier » du surlendemain. Cadence
+              choisit seul deux réglages d'après les données : si les séries ont des historiques de
+              longueurs très inégales, il ajoute la tendance sur un an (moyenne des 28 derniers jours
+              comparée à la même période un an plus tôt) ; si elles ont toutes la même longueur, il prend un modèle
+              plus gros et moins régularisé (1 200 arbres, η = 0,03, 255 feuilles).
+            </p>
+          </div>
+
+          <p class="model-formula-summary">
+            LightGBM ne donne pas de formule lisible comme Prophet, mais il apprend des interactions
+            qu'aucun des modèles précédents ne sait écrire (« samedi <em>et</em> promotion <em>et</em>
+            petit magasin ») et il est rapide sur des milliers de séries. Sur la page Kaggle, Cadence
+            le combine par défaut à SARIMAX : <strong>ŷ = w · ŷ<sub>LightGBM</sub> + (1 − w) ·
+            ŷ<sub>SARIMAX</sub></strong>, le poids w étant appris pour chaque série d'après trois
+            backtests rejoués sur ses derniers jours connus (50/50 si l'historique est trop court) — la
+            combinaison la plus précise à ce jour sur Store Sales et Recruit.
+          </p>
+        </div>
+      </div>
     </section>
   </main>
 
