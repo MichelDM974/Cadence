@@ -467,15 +467,22 @@ class Page:
         """Pleine page : la fenêtre est d'abord étirée à la hauteur de la
         page, puis rendue à sa taille. `captureBeyondViewport` fait croire à
         un redimensionnement : les graphes Chart.js (responsive) s'y
-        redessinaient au tiers de leur largeur, au milieu de la capture."""
+        redessinaient au tiers de leur largeur, au milieu de la capture. La
+        page peut grandir une fois étirée (graphes redessinés) : on étire
+        de nouveau jusqu'à ce que sa hauteur ne bouge plus, sinon le bas
+        n'est pas peint."""
         if not full_page:
             donnees = self.cdp("Page.captureScreenshot", format="png")["data"]
         else:
             self.js("window.scrollTo(0, 0)")
-            hauteur = self.js("document.documentElement.scrollHeight")
-            self._fenetre(self.viewport["width"], max(hauteur, self.viewport["height"]))
-            self.wait_for_timeout(300)
-            hauteur = self.js("document.documentElement.scrollHeight")
+            hauteur = 0
+            for _ in range(5):
+                nouvelle = max(self.js("document.documentElement.scrollHeight"), self.viewport["height"])
+                if nouvelle == hauteur:
+                    break
+                hauteur = nouvelle
+                self._fenetre(self.viewport["width"], hauteur)
+                self.wait_for_timeout(300)
             donnees = self.cdp("Page.captureScreenshot", format="png", clip={
                 "x": 0, "y": 0, "width": self.viewport["width"], "height": hauteur, "scale": 1})["data"]
             self._fenetre(self.viewport["width"], self.viewport["height"])
@@ -549,12 +556,12 @@ def commande_ui(args):
         page = nav.new_page(viewport={"width": 1400, "height": 1000})
         page.on("pageerror", lambda e: erreurs.append(str(e)))
 
-        page.goto(f"{base}/login.html")
+        # Lu hors de la page : sur une base neuve, auth.js quitte login.html
+        # pour setup.html pendant qu'un evaluate y tournerait.
         besoin_setup = json.loads(
-            page.evaluate("fetch('/api/me').then(r => r.text())")
+            urllib.request.urlopen(base + "/api/me", timeout=5).read()
         ).get("needs_setup")
-        if besoin_setup:
-            page.goto(f"{base}/setup.html")
+        page.goto(f"{base}/{'setup' if besoin_setup else 'login'}.html")
         page.fill("#login-username" if not besoin_setup else "#setup-username", IDENTIFIANT)
         page.fill("#login-password" if not besoin_setup else "#setup-password", MOTDEPASSE)
         page.click("button[type=submit]")
