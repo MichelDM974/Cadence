@@ -219,6 +219,31 @@ def test_run_bulk_lightgbm_forecast_auto_reduces_regularization_for_homogeneous_
     assert auto_rows == explicit_reduced_rows
 
 
+def test_run_bulk_lightgbm_forecast_default_settings_keep_auto_regularization():
+    # Ce que l'appli envoie (formulaire « Modèles » non modifié) : les défauts
+    # de LightGBM, qui ne doivent pas couper l'auto-détection (#16).
+    raw = _multi_entity_frame(200, [("1", "A"), ("2", "B"), ("3", "C")])
+    group_cols = ["store_nbr", "family"]
+    combos, group_indices = _combos_and_indices(raw, group_cols)
+    call_args = (
+        raw, "date", "sales", group_cols, 10, combos, group_indices, [],
+        None, [],
+        None, None, None, None,
+        "store_nbr", "family", None, None,
+        _daily_series, align_external_exog, None,
+    )
+    app_defaults = {k: lf.LGB_PARAMS[k] for k in ("learning_rate", "num_leaves", "min_data_in_leaf")}
+
+    auto_rows, _ = lf.run_bulk_lightgbm_forecast(*call_args, None, None, None)
+    app_rows, _ = lf.run_bulk_lightgbm_forecast(*call_args, app_defaults, lf.NUM_BOOST_ROUND, None)
+    custom_rows, _ = lf.run_bulk_lightgbm_forecast(
+        *call_args, {**app_defaults, "num_leaves": 31}, lf.NUM_BOOST_ROUND, None
+    )
+
+    assert app_rows == auto_rows
+    assert custom_rows != auto_rows
+
+
 def test_run_bulk_lightgbm_forecast_keeps_regularization_default_for_heterogeneous_history():
     raw = pd.concat(
         [_entity_frame_ending(400, "1", "A"), _entity_frame_ending(60, "2", "B")], ignore_index=True

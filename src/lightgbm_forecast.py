@@ -410,6 +410,11 @@ def run_bulk_lightgbm_forecast(
         include_yoy = bool(feature_config["include_yoy"])
     else:
         include_yoy = _should_auto_include_yoy(history, group_cols)
+    # Un réglage égal au défaut n'est pas un choix : l'appli renvoie toujours
+    # tout son formulaire, défauts compris, ce qui coupait l'auto-détection.
+    lgb_params = {k: v for k, v in (lgb_params or {}).items() if LGB_PARAMS.get(k) != v} or None
+    if num_boost_round == NUM_BOOST_ROUND:
+        num_boost_round = None
     if lgb_params is None and _should_auto_reduce_regularization(history, group_cols):
         lgb_params = HOMOGENEOUS_PANEL_PARAMS
         num_boost_round = num_boost_round or HOMOGENEOUS_PANEL_NUM_BOOST_ROUND
