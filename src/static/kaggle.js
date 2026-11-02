@@ -181,7 +181,7 @@ function selectedModelParams() {
   if (model === "sarimax") {
     return { sarimax: { order: [p.p, p.d, p.q], seasonal_order: [p.P, p.D, p.Q, p.s] } };
   }
-  return { [model]: p };
+  return { [model]: model === "lightgbm" ? lightgbmPayload(p) : p };
 }
 
 // --- Lancement d'un essai ------------------------------------------------

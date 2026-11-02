@@ -18,7 +18,7 @@ function escapeHtml(str) {
 const DEFAULT_MODEL_PARAMS = {
   sarimax: { p: 1, d: 1, q: 1, P: 1, D: 1, Q: 1, s: 7 },
   prophet: { interval_width: 0.8, changepoint_prior_scale: 0.05, seasonality_prior_scale: 10, seasonality_mode: "multiplicative" },
-  lightgbm: { learning_rate: 0.05, num_leaves: 63, min_data_in_leaf: 50, num_boost_round: 300 },
+  lightgbm: { learning_rate: 0.05, num_leaves: 63, min_data_in_leaf: 50, num_boost_round: 300, fine_lags: false },
 };
 
 const MODEL_PARAM_FIELDS = {
@@ -42,6 +42,7 @@ const MODEL_PARAM_FIELDS = {
     ["mp-lgb-leaves", "num_leaves", "int"],
     ["mp-lgb-mindata", "min_data_in_leaf", "int"],
     ["mp-lgb-rounds", "num_boost_round", "int"],
+    ["mp-lgb-finelags", "fine_lags", "bool"],
   ],
 };
 
@@ -162,8 +163,9 @@ function presetSelectOptionsHtml(modelName) {
 
 function populateModelParamsInputs(params) {
   for (const [modelName, fields] of Object.entries(MODEL_PARAM_FIELDS)) {
-    for (const [id, key] of fields) {
-      el(id).value = params[modelName][key];
+    for (const [id, key, type] of fields) {
+      if (type === "bool") el(id).checked = Boolean(params[modelName][key]);
+      else el(id).value = params[modelName][key];
     }
   }
 }
@@ -173,6 +175,10 @@ function readModelParamsFromInputs() {
   for (const [modelName, fields] of Object.entries(MODEL_PARAM_FIELDS)) {
     params[modelName] = {};
     for (const [id, key, type] of fields) {
+      if (type === "bool") {
+        params[modelName][key] = el(id).checked;
+        continue;
+      }
       const raw = el(id).value;
       params[modelName][key] = type === "int" ? parseInt(raw, 10) : type === "float" ? parseFloat(raw) : raw;
     }
@@ -202,6 +208,14 @@ function modelParamsPayload() {
   return {
     sarimax: { order: [p.sarimax.p, p.sarimax.d, p.sarimax.q], seasonal_order: [p.sarimax.P, p.sarimax.D, p.sarimax.Q, p.sarimax.s] },
     prophet: p.prophet,
-    lightgbm: p.lightgbm,
+    lightgbm: lightgbmPayload(p.lightgbm),
   };
+}
+
+// Les lags fins partent en feature_config, pas parmi les réglages LightGBM :
+// une clé inconnue de LGB_PARAMS y couperait l'auto-détection (#16).
+// Partagé avec la page Kaggle, qui envoie un préréglage tel quel.
+function lightgbmPayload(p) {
+  const { fine_lags, ...settings } = p;
+  return fine_lags ? { ...settings, feature_config: { fine_lags: true } } : settings;
 }

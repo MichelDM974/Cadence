@@ -133,6 +133,30 @@ def test_run_bulk_lightgbm_forecast_feature_config_is_opt_in():
     assert len(rows) == len(combos) * 10
 
 
+def test_run_bulk_lightgbm_forecast_fine_lags_option():
+    # La case « Lags fins » de la page Modèles envoie {"fine_lags": True}.
+    raw = _multi_entity_frame(60, [("1", "A"), ("2", "B")])
+    group_cols = ["store_nbr", "family"]
+    combos, group_indices = _combos_and_indices(raw, group_cols)
+    call_args = (
+        raw, "date", "sales", group_cols, 10, combos, group_indices, [],
+        None, [],
+        None, None, None, None,
+        "store_nbr", "family", None, None,
+        _daily_series, align_external_exog, None,
+        None, None,
+    )
+
+    lean_rows, _ = lf.run_bulk_lightgbm_forecast(*call_args, None)
+    fine_rows, _ = lf.run_bulk_lightgbm_forecast(*call_args, {"fine_lags": True})
+    explicit_rows, _ = lf.run_bulk_lightgbm_forecast(
+        *call_args, {"lag_days": lf.FINE_LAG_DAYS, "rolling_windows": lf.FINE_ROLLING_WINDOWS}
+    )
+
+    assert fine_rows == explicit_rows
+    assert fine_rows != lean_rows
+
+
 def test_should_auto_include_yoy_false_for_homogeneous_entity_lengths():
     raw = _multi_entity_frame(200, [("1", "A"), ("2", "B"), ("3", "C")])
     assert lf._should_auto_include_yoy(raw, ["store_nbr", "family"]) is False

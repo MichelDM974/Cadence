@@ -20,6 +20,10 @@ import pandas as pd
 
 LAG_DAYS = (1, 7, 14, 28)
 ROLLING_WINDOWS = (7, 28)
+# Lags fins (opt-in, `feature_config["fine_lags"]`, case de la page Modèles) :
+# la variante « lags fins » du 04/09 (benchmark_lightgbm_variants.py).
+FINE_LAG_DAYS = (1, 2, 3, 4, 5, 6, 7, 14, 21, 28)
+FINE_ROLLING_WINDOWS = (7, 14, 28)
 TAIL_WINDOW_DAYS = 35  # >= max(lag, rolling) + marge : borne la fenêtre glissante de la boucle récursive
 
 LGB_PARAMS = {
@@ -378,7 +382,8 @@ def run_bulk_lightgbm_forecast(
     quel côté appelant.
 
     `feature_config` (opt-in, absent par défaut = comportement lean actuel) :
-    `{"lag_days": (...), "rolling_windows": (...), "include_yoy": bool}` —
+    `{"lag_days": (...), "rolling_windows": (...), "include_yoy": bool}`,
+    ou `{"fine_lags": True}` pour FINE_LAG_DAYS/FINE_ROLLING_WINDOWS —
     cf. benchmarks *Store Sales*/*Recruit* (centre-de-controle, BENCHMARKS.md)
     pour l'origine de ces axes. `lag_days`/`rolling_windows` restent lean par
     défaut (pas de preuve isolée d'amélioration universelle). `include_yoy`
@@ -404,8 +409,9 @@ def run_bulk_lightgbm_forecast(
     _apply_code_maps(future_exog, group_cols, code_maps)
 
     feature_config = feature_config or {}
-    lag_days = tuple(feature_config.get("lag_days", LAG_DAYS))
-    rolling_windows = tuple(feature_config.get("rolling_windows", ROLLING_WINDOWS))
+    fine = feature_config.get("fine_lags", False)
+    lag_days = tuple(feature_config.get("lag_days", FINE_LAG_DAYS if fine else LAG_DAYS))
+    rolling_windows = tuple(feature_config.get("rolling_windows", FINE_ROLLING_WINDOWS if fine else ROLLING_WINDOWS))
     if "include_yoy" in feature_config:
         include_yoy = bool(feature_config["include_yoy"])
     else:

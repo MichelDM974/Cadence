@@ -170,6 +170,12 @@
           </div>
           <p class="param-desc">Nombre d'arbres ajoutés successivement au modèle ; plus il y en a, plus le modèle peut affiner ses prévisions (au risque de surapprendre).</p>
         </div>
+        <div class="param-row">
+          <div class="param-control">
+            <label><input type="checkbox" id="mp-lgb-finelags" /> Lags fins</label>
+          </div>
+          <p class="param-desc">Donne au modèle chacun des 7 derniers jours (et non plus seulement la veille et la semaine passée) ; à essayer sur vos données, ce n'est pas un gain sur tous les jeux d'essai.</p>
+        </div>
         <button type="button" class="model-params-reset-btn" data-model="lightgbm">Réinitialiser</button>
 
         <button type="button" class="collapsible-tab" aria-expanded="false" aria-controls="presets-lightgbm">
