@@ -14,7 +14,8 @@ Tous les chemins ci-dessous sont relatifs à `Cadence/`.
 
 ## Prérequis
 
-Le venv du projet suffit pour tout sauf les captures d'écran :
+Le venv du projet suffit pour `serve` et les tests ; `smoke` et `ui` n'ont
+besoin que de la stdlib (le python système suffit) :
 
 ```bash
 .venv/bin/python -c "import fastapi, uvicorn, statsmodels, prophet, lightgbm; print('ok')"
@@ -47,16 +48,22 @@ photographie l'accueil, l'analyse, la page théorie et la page modèles,
 puis lance un vrai backtest sur la page Kaggle (mini-compétition générée) et
 la photographie en largeur bureau et téléphone.
 
-Playwright n'est pas une dépendance du projet — l'installer à part pour ne
-pas polluer le venv :
+Sans playwright (#13) : le driver pilote le chromium en cache dans
+`~/.cache/ms-playwright` (à défaut son `chrome-headless-shell`) par le
+protocole DevTools sur un tube, en stdlib — classes `Chromium`, `Page` et
+`Locator` reprises de `run-cdc`, réduites à ce dont `ui` se sert.
 
 ```bash
-python3 -m venv /tmp/pwenv && /tmp/pwenv/bin/pip install playwright
-/tmp/pwenv/bin/python .claude/skills/run-cadence/driver.py ui --port 8011 --out /tmp/cadence-captures
+python3 .claude/skills/run-cadence/driver.py ui --port 8011 --out /tmp/cadence-captures
 ```
 
+Compter une à deux minutes : le backtest Kaggle tourne le modèle par
+défaut de la page (ensemble LightGBM + SARIMAX, poids appris sur trois
+fenêtres).
+
 Sortie attendue : connexion, nombre de graphes et de formules KaTeX rendus,
-puis `erreurs JS : aucune`. Les captures atterrissent dans `--out` : `01-accueil.png`,
+puis `erreurs JS : aucune` ; code de sortie ≠ 0 sur une erreur JS ou une
+largeur sur téléphone différente de 390. Les captures atterrissent dans `--out` : `01-accueil.png`,
 `02-analyse.png`, `03-theorie.png`, `04-modeles.png`, `05-kaggle.png`,
 `06-kaggle-mobile.png` (largeur de page sur téléphone affichée : doit valoir 390). **Les regarder** —
 une image vide ou une page d'erreur veut dire que le lancement a échoué
@@ -99,10 +106,11 @@ vraie base. À réserver à un usage manuel : pour tout essai, préférer
   produire des NaN selon la version de statsmodels : le résultat sort
   aujourd'hui à `null` plutôt qu'en 500, mais mieux vaut un jeu d'essai
   avec du bruit — `csv_demo()` en fournit un.
-- **Les navigateurs de `~/.cache/ms-playwright` ne correspondent pas
-  forcément à la version réclamée par le playwright installé.** D'où
-  l'`executable_path` explicite du driver, qui prend le chromium en cache
-  le plus récent au lieu de laisser playwright chercher le sien.
+- **Capture pleine page : fenêtre étirée, pas `captureBeyondViewport`.**
+  Ce dernier fait croire à un redimensionnement : les graphes Chart.js
+  (responsive) se redessinaient au tiers de leur largeur en pleine
+  capture. `Page.screenshot` étire la fenêtre à la hauteur de la page,
+  capture, puis la rétablit.
 
 ## Dépannage
 
@@ -110,6 +118,6 @@ vraie base. À réserver à un usage manuel : pour tout essai, préférer
 |---|---|
 | `ModuleNotFoundError: itsdangerous` | `SessionMiddleware` en dépend et fastapi ne le tire pas. Il est dans `requirements.txt` ; réinstaller avec `.venv/bin/pip install -r requirements-dev.txt -c constraints.txt`. |
 | `smoke` : `ECHEC : rien ne répond` | `serve` n'est pas lancé, ou pas sur le même `--port`. |
-| `ui` : `Executable doesn't exist at .../chromium_headless_shell-XXXX` | Playwright cherche sa version à lui. Le driver contourne via `executable_path` ; si le cache est vide, `playwright install chromium`. |
+| `ui` : `aucun chromium dans ~/.cache/ms-playwright` | Cache vide : `playwright install chromium`, depuis n'importe quel environnement où playwright est installé (le driver, lui, n'en a pas besoin). |
 | `/api/setup` renvoie 403 | Un compte existe déjà sur cette base. Se connecter via `/api/login`, ou repartir d'un `--data` neuf. |
-| Port déjà pris | Un `serve` traîne. `pkill -f "driver[.]py serve"` (les crochets évitent que le motif tue le shell appelant). |
+| Port déjà pris | Un `serve` traîne : `fuser -k -n tcp 8011`. |

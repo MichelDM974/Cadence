@@ -6,15 +6,22 @@ Trois sous-commandes, à lancer depuis la racine du projet avec .venv/bin/python
 
     serve   démarre l'app sur une base isolée (bloquant, Ctrl-C pour arrêter)
     smoke   vérifie l'API de bout en bout (création de compte incluse)
-    ui      pilote l'interface dans chromium et écrit des captures
+    ui      pilote l'interface dans chromium et écrit des captures (stdlib
+            seule, sans playwright : le python système suffit)
 
 `serve` n'écrit jamais dans data/cadence.db : sans ça, le moindre essai
 crée des comptes et des points de vente dans les vraies données.
 """
 import argparse
+import base64
+import fcntl
 import json
+import os
 import pathlib
+import select
+import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -226,17 +233,307 @@ def commande_smoke(args):
 
 # --- ui --------------------------------------------------------------
 
-CHROMIUMS = sorted(pathlib.Path.home().glob(".cache/ms-playwright/chromium-*/chrome-linux*/chrome"))
+# Le chromium que `playwright install chromium` met en cache ; à défaut, son
+# chrome-headless-shell, qui suffit aussi. Playwright lui-même n'est pas
+# requis (#13) : le driver parle DevTools en stdlib.
+CHROMIUMS = (sorted(pathlib.Path.home().glob(".cache/ms-playwright/chromium-*/chrome-linux*/chrome"))
+             or sorted(pathlib.Path.home().glob(
+                 ".cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux*/chrome-headless-shell")))
+# Ceux des réglages de playwright qui changent ce que la page montre (barres
+# de défilement, survol, couleurs) ; le trousseau GNOME, verrouillé au
+# démarrage, figerait chromium sans `basic`.
+OPTIONS_CHROMIUM = [
+    "--headless", "--no-sandbox", "--hide-scrollbars", "--mute-audio", "--force-color-profile=srgb",
+    "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4",
+    "--no-first-run", "--no-default-browser-check", "--password-store=basic",
+    "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
+]
+# Avant un clic, comme playwright : défile jusqu'à l'élément s'il n'est pas
+# tout entier à l'écran, puis rend sa boîte.
+BOITE = """el => {
+    let r = el.getBoundingClientRect();
+    if (r.top < 0 || r.left < 0 || r.bottom > innerHeight || r.right > innerWidth) {
+        el.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
+        r = el.getBoundingClientRect();
+    }
+    return {x: r.x, y: r.y, width: r.width, height: r.height};
+}"""
+# La visibilité selon playwright (état par défaut de wait_for_selector).
+VISIBLE = """el => { const r = el.getBoundingClientRect();
+    return el.checkVisibility() && getComputedStyle(el).visibility === 'visible' && r.width > 0 && r.height > 0; }"""
+
+
+class Chromium:
+    """Le chromium en cache, piloté sans playwright (repris du driver de
+    run-cdc, réduit à ce dont `ui` se sert) : le protocole DevTools passe par
+    un tube (`--remote-debugging-pipe` : du JSON terminé par un octet nul,
+    lu sur son fd 3, écrit sur son fd 4)."""
+
+    def __init__(self, binaire):
+        self.profil = tempfile.TemporaryDirectory(prefix="cadence-chromium-")
+        self.journal = pathlib.Path(self.profil.name) / "chromium.log"
+        lecture, self.vers = os.pipe()
+        self.depuis, ecriture = os.pipe()
+        # Recopiés au-dessus de 4 : les dup2 de l'enfant vers 3 et 4 ne
+        # peuvent plus s'écraser l'un l'autre.
+        enfant = [fcntl.fcntl(fd, fcntl.F_DUPFD_CLOEXEC, 5) for fd in (lecture, ecriture)]
+        os.close(lecture)
+        os.close(ecriture)
+        with open(self.journal, "wb") as journal:
+            self.processus = subprocess.Popen(
+                [str(binaire), *OPTIONS_CHROMIUM, f"--user-data-dir={self.profil.name}",
+                 "--remote-debugging-pipe", "about:blank"],
+                stdout=journal, stderr=journal, close_fds=False,
+                preexec_fn=lambda: (os.dup2(enfant[0], 3), os.dup2(enfant[1], 4)))
+        for fd in enfant:
+            os.close(fd)
+        self.tampon, self.numero, self.reponses, self.pages = b"", 0, {}, {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def close(self):
+        if self.profil is None:
+            return
+        try:
+            self._ecrire({"id": 0, "method": "Browser.close"})
+            self.processus.wait(10)
+        except (OSError, subprocess.TimeoutExpired):
+            self.processus.kill()
+            self.processus.wait()
+        os.close(self.vers)
+        os.close(self.depuis)
+        self.profil.cleanup()
+        self.profil = None
+
+    def _ecrire(self, message):
+        donnees = json.dumps(message).encode() + b"\0"
+        while donnees:
+            donnees = donnees[os.write(self.vers, donnees):]
+
+    def _lire(self, delai):
+        """Le prochain message de chromium, ou None passé `delai` secondes."""
+        fin = time.monotonic() + delai
+        while b"\0" not in self.tampon:
+            if not select.select([self.depuis], [], [], max(0, fin - time.monotonic()))[0]:
+                return None
+            morceau = os.read(self.depuis, 1 << 20)
+            if not morceau:
+                raise RuntimeError("chromium s'est arrêté : " + self.journal.read_text(errors="replace")[-500:])
+            self.tampon += morceau
+        message, _, self.tampon = self.tampon.partition(b"\0")
+        return json.loads(message)
+
+    def attendre(self, condition, secondes):
+        """Traite ce qu'envoie chromium jusqu'à ce que `condition()` soit
+        vraie ; faux si elle ne l'est pas au bout de `secondes`."""
+        fin = time.monotonic() + secondes
+        while not condition():
+            reste = fin - time.monotonic()
+            if reste <= 0:
+                return False
+            message = self._lire(reste)
+            if message is None:
+                continue
+            if "id" in message:
+                self.reponses[message["id"]] = message
+            elif message.get("sessionId") in self.pages:
+                self.pages[message["sessionId"]].evenement(message["method"], message.get("params", {}))
+        return True
+
+    def commande(self, methode, session=None, **params):
+        self.numero += 1
+        numero = self.numero
+        self._ecrire({"id": numero, "method": methode, "params": params, **({"sessionId": session} if session else {})})
+        if not self.attendre(lambda: numero in self.reponses, 30):
+            raise RuntimeError(f"{methode} : pas de réponse de chromium en 30 s")
+        reponse = self.reponses.pop(numero)
+        if "error" in reponse:
+            raise RuntimeError(f"{methode} : {reponse['error'].get('message')}")
+        return reponse.get("result", {})
+
+    def new_page(self, viewport):
+        """Un onglet dans un contexte à lui (cookies compris), comme le
+        `new_page` d'un navigateur playwright."""
+        contexte = self.commande("Target.createBrowserContext")["browserContextId"]
+        cible = self.commande("Target.createTarget", url="about:blank", browserContextId=contexte)["targetId"]
+        session = self.commande("Target.attachToTarget", targetId=cible, flatten=True)["sessionId"]
+        page = self.pages[session] = Page(self, session)
+        for domaine in ("Page", "Runtime"):
+            page.cdp(f"{domaine}.enable")
+        page.cdp("Emulation.setFocusEmulationEnabled", enabled=True)
+        page.set_viewport_size(viewport)
+        return page
+
+
+class Page:
+    def __init__(self, nav, session):
+        self.nav, self.session = nav, session
+        self.chargements = 0  # événements « load » du document principal
+        self.rappels = {"pageerror": []}
+
+    def cdp(self, methode, **params):
+        return self.nav.commande(methode, self.session, **params)
+
+    def on(self, evenement, rappel):
+        """« pageerror » reçoit le message de l'exception."""
+        self.rappels[evenement].append(rappel)
+
+    def evenement(self, methode, params):
+        if methode == "Page.loadEventFired":
+            self.chargements += 1
+        elif methode == "Runtime.exceptionThrown":
+            details = params["exceptionDetails"]
+            for rappel in self.rappels["pageerror"]:
+                rappel(details.get("exception", {}).get("description") or details.get("text"))
+
+    def js(self, expression):
+        resultat = self.cdp("Runtime.evaluate", expression=expression, returnByValue=True, awaitPromise=True)
+        if "exceptionDetails" in resultat:
+            details = resultat["exceptionDetails"]
+            raise RuntimeError("script : " + (details.get("exception", {}).get("description") or details.get("text")))
+        return resultat["result"].get("value")
+
+    def _sonder(self, expression, ms, quoi):
+        """Attend que `expression` soit vraie. Une page qui change sous le
+        script (« context destroyed ») compte pour un non, pas une panne."""
+        fin = time.monotonic() + ms / 1000
+        while True:
+            try:
+                if self.js(expression):
+                    return
+            except RuntimeError:
+                pass
+            if time.monotonic() > fin:
+                raise RuntimeError(f"{quoi} : pas obtenu en {ms / 1000:.0f} s")
+            self.wait_for_timeout(100)
+
+    def goto(self, url):
+        avant = self.chargements
+        resultat = self.cdp("Page.navigate", url=url)
+        if resultat.get("errorText"):
+            raise RuntimeError(f"{url} : {resultat['errorText']}")
+        if not self.nav.attendre(lambda: self.chargements > avant, 30):
+            raise RuntimeError(f"{url} : aucune page chargée en 30 s")
+
+    def wait_for_timeout(self, ms):
+        self.nav.attendre(lambda: False, ms / 1000)
+
+    def wait_for_url(self, url, timeout=30000):
+        self._sonder(f"location.href === {json.dumps(url)} && document.readyState === 'complete'",
+                     timeout, f"adresse {url}")
+
+    def wait_for_selector(self, css, timeout=30000):
+        """Comme playwright : attend qu'un élément du sélecteur soit visible."""
+        self._sonder(f"(() => {{ const el = document.querySelector({json.dumps(css)}); "
+                     f"return !!el && ({VISIBLE})(el); }})()", timeout, css)
+
+    def evaluate(self, expression):
+        return self.js(expression)
+
+    def eval_on_selector_all(self, css, fonction):
+        return self.js(f"({fonction})(Array.from(document.querySelectorAll({json.dumps(css)})))")
+
+    def set_viewport_size(self, viewport):
+        self.viewport = dict(viewport)
+        self._fenetre(viewport["width"], viewport["height"])
+
+    def _fenetre(self, largeur, hauteur):
+        self.cdp("Emulation.setDeviceMetricsOverride", width=largeur, height=hauteur,
+                 deviceScaleFactor=1, mobile=False)
+
+    def locator(self, css):
+        return Locator(self, css)
+
+    def fill(self, css, texte):
+        self.locator(css).fill(texte)
+
+    def click(self, css):
+        self.locator(css).click()
+
+    def inner_text(self, css):
+        return self.locator(css).inner_text()
+
+    def dispatch_event(self, css, type_):
+        self.locator(css).dispatch_event(type_)
+
+    def set_input_files(self, css, fichier):
+        self.locator(css).set_input_files(fichier)
+
+    def screenshot(self, path, full_page=False):
+        """Pleine page : la fenêtre est d'abord étirée à la hauteur de la
+        page, puis rendue à sa taille. `captureBeyondViewport` fait croire à
+        un redimensionnement : les graphes Chart.js (responsive) s'y
+        redessinaient au tiers de leur largeur, au milieu de la capture."""
+        if not full_page:
+            donnees = self.cdp("Page.captureScreenshot", format="png")["data"]
+        else:
+            self.js("window.scrollTo(0, 0)")
+            hauteur = self.js("document.documentElement.scrollHeight")
+            self._fenetre(self.viewport["width"], max(hauteur, self.viewport["height"]))
+            self.wait_for_timeout(300)
+            hauteur = self.js("document.documentElement.scrollHeight")
+            donnees = self.cdp("Page.captureScreenshot", format="png", clip={
+                "x": 0, "y": 0, "width": self.viewport["width"], "height": hauteur, "scale": 1})["data"]
+            self._fenetre(self.viewport["width"], self.viewport["height"])
+            self.wait_for_timeout(150)
+        pathlib.Path(path).write_bytes(base64.b64decode(donnees))
+
+
+class Locator:
+    """Un sélecteur CSS ; chaque action vise son premier élément, attendu
+    jusqu'à 10 s comme le ferait playwright."""
+
+    def __init__(self, page, css):
+        self.page, self.css = page, css
+
+    def _trouver(self):
+        return f"document.querySelector({json.dumps(self.css)})"
+
+    def _sur(self, fonction):
+        self.page._sonder(f"!!{self._trouver()}", 10000, self.css)
+        return self.page.js(f"({fonction})({self._trouver()})")
+
+    def click(self):
+        boite = self._sur(BOITE)
+        x, y = boite["x"] + boite["width"] / 2, boite["y"] + boite["height"] / 2
+        for geste in ("mouseMoved", "mousePressed", "mouseReleased"):
+            self.page.cdp("Input.dispatchMouseEvent", type=geste, x=x, y=y, clickCount=1,
+                          button="none" if geste == "mouseMoved" else "left")
+
+    def fill(self, texte):
+        """Comme une frappe : remplace le contenu et déclenche `input`. Vidé
+        par script plutôt que sélectionné : une valeur posée entre-temps par
+        la page (kaggle.js remplit la compétition à son chargement) se
+        retrouvait devant le texte tapé."""
+        self._sur("el => { el.focus(); el.value = ''; }")
+        self.page.cdp("Input.insertText", text=texte)
+
+    def inner_text(self):
+        return self._sur("el => el.innerText")
+
+    def dispatch_event(self, type_):
+        self._sur(f"el => el.dispatchEvent(new Event({json.dumps(type_)}, {{bubbles: true}}))")
+
+    def set_input_files(self, fichier):
+        """`fichier` à la playwright ({name, mimeType, buffer}) : écrit dans
+        le profil jetable de chromium, puis donné au champ, qui reçoit
+        `input` et `change` comme après un vrai choix."""
+        self._sur("el => true")
+        dossier = pathlib.Path(tempfile.mkdtemp(dir=self.page.nav.profil.name, prefix="fichiers-"))
+        chemin = dossier / fichier["name"]
+        chemin.write_bytes(fichier["buffer"])
+        objet = self.page.cdp("Runtime.evaluate", expression=self._trouver())["result"]["objectId"]
+        self.page.cdp("DOM.setFileInputFiles", files=[str(chemin)], objectId=objet)
 
 
 def commande_ui(args):
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        print("ECHEC : playwright absent. `pip install playwright` (cf. SKILL.md).", file=sys.stderr)
-        return 1
     if not CHROMIUMS:
-        print("ECHEC : aucun chromium en cache. `playwright install chromium`.", file=sys.stderr)
+        print("ECHEC : aucun chromium dans ~/.cache/ms-playwright (`playwright install chromium`, "
+              "d'où qu'il soit lancé).", file=sys.stderr)
         return 1
 
     base = f"http://127.0.0.1:{args.port}"
@@ -248,10 +545,7 @@ def commande_ui(args):
     sortie.mkdir(parents=True, exist_ok=True)
     erreurs = []
 
-    with sync_playwright() as p:
-        # executable_path explicite : le chromium en cache ne correspond
-        # pas forcément à la version que réclame le playwright installé.
-        nav = p.chromium.launch(executable_path=str(CHROMIUMS[-1]))
+    with Chromium(CHROMIUMS[-1]) as nav:
         page = nav.new_page(viewport={"width": 1400, "height": 1000})
         page.on("pageerror", lambda e: erreurs.append(str(e)))
 
@@ -294,13 +588,14 @@ def commande_ui(args):
         # Page Kaggle : fichiers -> colonnes proposées -> backtest réel.
         train, test = kaggle_demo()
         page.goto(f"{base}/kaggle.html")
+        page.wait_for_timeout(500)  # la page pose d'abord la dernière compétition
         page.fill("#competition-input", "driver-demo")
         page.dispatch_event("#competition-input", "change")
         page.set_input_files("#train-file", {"name": "train.csv", "mimeType": "text/csv", "buffer": train})
         page.set_input_files("#test-file", {"name": "test.csv", "mimeType": "text/csv", "buffer": test})
         page.wait_for_selector("#mapping-panel:not([hidden])", timeout=60000)
         page.click("#backtest-btn")
-        page.wait_for_selector("#run-result:not([hidden])", timeout=120000)
+        page.wait_for_selector("#run-result:not([hidden])", timeout=300000)
         page.wait_for_timeout(800)
         page.screenshot(path=str(sortie / "05-kaggle.png"), full_page=True)
         print(f"  page Kaggle : {page.inner_text('#run-summary')[:90]}...")
@@ -310,11 +605,9 @@ def commande_ui(args):
         largeur = page.evaluate("document.documentElement.scrollWidth")
         print(f"  largeur de page sur téléphone : {largeur}px (attendu 390)")
 
-        nav.close()
-
     print(f"  captures dans {sortie}")
     print("  erreurs JS :", erreurs if erreurs else "aucune")
-    return 1 if erreurs else 0
+    return 1 if erreurs or largeur != 390 else 0
 
 
 def main():
