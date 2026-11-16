@@ -1,4 +1,4 @@
-// Aides communes aux web apps de « Mes Projets » (style commun, modèle CryptX) :
+// Aides communes aux pages de Cadence :
 // police des graphiques, bulles d'aide, explications des panneaux derrière un « ? ».
 // Tout dans une fonction : les autres scripts déclarent déjà el(), cssVar()… au
 // niveau global, une redéclaration ici casserait la page.

@@ -1,7 +1,7 @@
 """Compare, sur deux jeux de données Kaggle réels (*Store Sales* : historique
 long/homogène ; *Recruit* : historique court/hétérogène par restaurant), le
 LightGBM lean actuel de l'app (`lightgbm_forecast.py`) contre les 3 pistes
-candidates identifiées dans le cdc (lags fins, lag annuel/
+candidates identifiées au fil des benchmarks (lags fins, lag annuel/
 yoy_trend, régularisation réduite) — en appelant directement
 `run_bulk_lightgbm_forecast`, le vrai point d'entrée de production, pas une
 réimplémentation séparée.
@@ -23,6 +23,7 @@ un vrai "off" qui n'existe plus par défaut.
 Usage : python benchmark_lightgbm_variants.py [store_sales|recruit|both]
 """
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -34,7 +35,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from api import _daily_series, align_external_exog, group_combinations  # noqa: E402
 from lightgbm_forecast import run_bulk_lightgbm_forecast  # noqa: E402
 
-STORE_SALES_DIR = "/home/delhomme/Téléchargements/store-sales-time-series-forecasting"
+STORE_SALES_DIR = os.environ.get(
+    "STORE_SALES_DIR", os.path.expanduser("~/Téléchargements/store-sales-time-series-forecasting"))
 RECRUIT_DIR = str(Path(__file__).resolve().parent.parent / "data" / "raw")
 
 VARIANTS = {

@@ -31,7 +31,7 @@ LGB_PARAMS = {
     # ventes quotidiennes) est typiquement zero-inflated et très asymétrique
     # (beaucoup d'entités à faible volume, quelques pics) — L2 sur cible
     # log-transformée introduit un biais de sous-prévision documenté sur ce
-    # type de données (cf. benchmark Kaggle *Store Sales*, centre-de-controle :
+    # type de données (cf. benchmark Kaggle *Store Sales*, BENCHMARKS.md :
     # 0.55166 -> 0.42475 RMSLE avec ce même changement). Approche utilisée
     # par la gagnante du Kaggle M5 Forecasting - Accuracy (LightGBM+tweedie).
     "objective": "tweedie",
@@ -71,7 +71,7 @@ def add_lag_features(
     le regroupement des lignes par entité).
 
     `lag_days`/`rolling_windows`/`include_yoy` sont des overrides opt-in (cf.
-    benchmarks *Store Sales* et *Recruit*, centre-de-controle) : les défauts
+    benchmarks *Store Sales* et *Recruit*, BENCHMARKS.md) : les défauts
     reproduisent le comportement historique (lean) de l'app, inchangé tant
     que l'appelant ne passe rien. `include_yoy` suppose `28` dans
     `rolling_windows` (sert de base à `yoy_trend`) et au moins ~1 an
@@ -129,7 +129,7 @@ def _should_auto_include_yoy(history: pd.DataFrame, group_cols: list[str]) -> bo
     entités (coefficient de variation) : nul par construction sur un panel
     homogène (toutes les entités ont exactement le même historique, ex.
     *Store Sales* : cv=0.0) — l'axe n'y a jamais aidé (cf. benchmark
-    04/09/2026, centre-de-controle) et reste désactivé, comportement lean
+    du 04/09/2026, BENCHMARKS.md) et reste désactivé, comportement lean
     inchangé. Nettement positif dès que les entités ont des historiques de
     longueurs très inégales (ex. *Recruit*, restaurants à dates d'ouverture
     différentes : cv=0.31) — l'axe y aide (même benchmark), donc activé
@@ -384,7 +384,7 @@ def run_bulk_lightgbm_forecast(
     `feature_config` (opt-in, absent par défaut = comportement lean actuel) :
     `{"lag_days": (...), "rolling_windows": (...), "include_yoy": bool}`,
     ou `{"fine_lags": True}` pour FINE_LAG_DAYS/FINE_ROLLING_WINDOWS —
-    cf. benchmarks *Store Sales*/*Recruit* (centre-de-controle, BENCHMARKS.md)
+    cf. benchmarks *Store Sales*/*Recruit* (BENCHMARKS.md)
     pour l'origine de ces axes. `lag_days`/`rolling_windows` restent lean par
     défaut (pas de preuve isolée d'amélioration universelle). `include_yoy`
     et la régularisation (`lgb_params`, si non fourni explicitement par

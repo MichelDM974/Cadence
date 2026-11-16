@@ -1,4 +1,4 @@
-"""Ticket #10 : poids d'ensemble LightGBM / SARIMAX propres à chaque série,
+"""Poids d'ensemble LightGBM / SARIMAX propres à chaque série,
 comparés au 50/50 de la page, sur les fenêtres du banc (3 récentes + an-1).
 
 Pour noter honnêtement une fenêtre, les poids ne s'apprennent que sur des

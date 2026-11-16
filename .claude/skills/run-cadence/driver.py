@@ -264,8 +264,8 @@ VISIBLE = """el => { const r = el.getBoundingClientRect();
 
 
 class Chromium:
-    """Le chromium en cache, piloté sans playwright (repris du driver de
-    run-cdc, réduit à ce dont `ui` se sert) : le protocole DevTools passe par
+    """Le chromium en cache, piloté sans playwright (repris d'un autre de
+    mes drivers, réduit à ce dont `ui` se sert) : le protocole DevTools passe par
     un tube (`--remote-debugging-pipe` : du JSON terminé par un octet nul,
     lu sur son fd 3, écrit sur son fd 4)."""
 

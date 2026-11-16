@@ -28,7 +28,8 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 
-DATA_DIR = os.path.expanduser("~/Téléchargements/store-sales-time-series-forecasting")
+DATA_DIR = os.environ.get(
+    "STORE_SALES_DIR", os.path.expanduser("~/Téléchargements/store-sales-time-series-forecasting"))
 
 HORIZON = 16
 LAG_DAYS = (1, 2, 3, 4, 5, 6, 7, 14, 21, 28, 364)
@@ -60,7 +61,7 @@ LGB_PARAMS = {
 }
 NUM_BOOST_ROUND = 2000
 EARLY_STOPPING_ROUNDS = 100
-# figé après tuning par --validate (cf. centre-de-controle/journaux/cadence.md) : nombre
+# figé après tuning par --validate : nombre
 # d'itérations retenu pour l'entraînement final sans validation interne.
 FINAL_NUM_BOOST_ROUND = 1200
 

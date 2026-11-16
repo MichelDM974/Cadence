@@ -1,4 +1,4 @@
-"""Poids d'ensemble LightGBM / SARIMAX propres à chaque série (ticket #10),
+"""Poids d'ensemble LightGBM / SARIMAX propres à chaque série,
 à la FFORMA (Montero-Manso et al., 2020) : un méta-modèle LightGBM prédit
 la part de LightGBM d'une série à partir de descripteurs de son historique
 (niveau, bruit, zéros, saisonnalité hebdomadaire, tendance, écart entre les

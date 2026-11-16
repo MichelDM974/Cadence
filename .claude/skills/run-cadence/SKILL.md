@@ -51,7 +51,7 @@ la photographie en largeur bureau et téléphone.
 Sans playwright (#13) : le driver pilote le chromium en cache dans
 `~/.cache/ms-playwright` (à défaut son `chrome-headless-shell`) par le
 protocole DevTools sur un tube, en stdlib — classes `Chromium`, `Page` et
-`Locator` reprises de `run-cdc`, réduites à ce dont `ui` se sert.
+`Locator` reprises d'un autre de mes drivers, réduites à ce dont `ui` se sert.
 
 ```bash
 python3 .claude/skills/run-cadence/driver.py ui --port 8011 --out /tmp/cadence-captures

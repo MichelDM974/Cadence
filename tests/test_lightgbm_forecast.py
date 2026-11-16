@@ -110,7 +110,7 @@ def test_add_lag_features_include_yoy_computes_trend_from_last_year():
 def test_run_bulk_lightgbm_forecast_feature_config_is_opt_in():
     """feature_config par défaut (absent) doit reproduire exactement le
     comportement lean actuel pour lags fins/rolling windows — ces deux axes
-    restent opt-in, jamais des changements de défaut (cf. centre-de-controle :
+    restent opt-in, jamais des changements de défaut (cf. BENCHMARKS.md :
     aucun n'améliore Store Sales et Recruit à la fois). `include_yoy` est
     l'exception, désormais auto-détecté (cf. tests dédiés ci-dessous) — ce
     test-ci le fixe explicitement à True pour ne pas dépendre de cette

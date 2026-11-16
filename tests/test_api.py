@@ -826,7 +826,7 @@ def _frame_entites(n_jours, entites):
 def _lancer_bulk(csv_bytes, **champs):
     """Démarre un job et attend sa fin. Poll espacé : un poll serré a déjà
     rendu un test bulk instable en le faisant concurrencer le thread de
-    travail (cf. centre-de-controle)."""
+    travail."""
     donnees = {"date_col": "date", "value_col": "sales", "store_col": "store_nbr",
                "category_col": "family", "horizon": "5", **champs}
     start = client.post(
